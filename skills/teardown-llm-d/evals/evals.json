@@ -1,0 +1,23 @@
+{
+  "skill_name": "teardown-llm-d-stack",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm done with my llm-d benchmark run. Please tear down the stack in my rachelt-benchmark namespace.",
+      "expected_output": "Detects namespace rachelt-benchmark, lists helm releases, presents teardown plan, confirms with user before uninstalling releases. Does not delete HTTPRoutes without asking.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Remove only the model service from my llm-d stack in namespace llm-d-test, but keep the gateway.",
+      "expected_output": "Lists all helm releases, identifies the model service release(s), presents a partial teardown plan scoped to only those releases, confirms before uninstalling. Does not touch gateway or HTTPRoutes.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Clean up everything in namespace llm-d-dev after my experiment — releases and httproutes.",
+      "expected_output": "Lists all resources, presents full teardown plan. Confirms helm releases, then separately asks about HTTPRoutes deletion — as a distinct opt-in step. Executes each only after user confirms.",
+      "files": []
+    }
+  ]
+}
