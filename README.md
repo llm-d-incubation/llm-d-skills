@@ -4,7 +4,7 @@ A collection of skills for deploying and benchmarking llm-d. This project follow
 
 ## Overview
 
-This repository provides modular, reusable agent skills required to operate and invoke vLLM, following the Anthropics `SKILL.md` specification. Each skill is a directory implementing automation, scripts, and metadata for a specific operational task, reusing llm-d guides and scripts as much as possible.
+This repository provides modular, reusable agent skills required to operate and deploy llm-d, following the Anthropics `SKILL.md` specification. Each skill is a directory implementing automation, scripts, and metadata for a specific operational task, reusing llm-d guides and scripts as much as possible.
 
 All skills adhere to the Anthropics skills template and can be copied into a code assistant skills directory for use. The code assistant will read the skills when pointed to the skills directory. Note that the code assistant reads the name and description of the skill, and will load the entire skill only when prompted to perform a task associated with that skill.
 
