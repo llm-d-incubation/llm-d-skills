@@ -1,0 +1,23 @@
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: gaie-epp  # Match your EPP service name
+  namespace: your-namespace  # Same namespace as EPP service
+spec:
+  host: gaie-epp.your-namespace.svc.cluster.local  # Full service FQDN (gaie-{release}.{namespace}.svc.cluster.local)
+  trafficPolicy:
+    connectionPool:
+      http:
+        http1MaxPendingRequests: 256000  # Max pending HTTP/1.1 requests
+        http2MaxRequests: 256000  # Max concurrent HTTP/2 requests (adjust for expected concurrency)
+        idleTimeout: 900s  # Connection idle timeout (15 min)
+        maxRequestsPerConnection: 256000  # Max requests per connection
+      tcp:
+        connectTimeout: 900s  # TCP connection timeout (15 min)
+        maxConnectionDuration: 1800s  # Max connection lifetime (30 min, adjust for inference duration)
+        maxConnections: 256000  # Max TCP connections (adjust for throughput requirements)
+    tls:
+      insecureSkipVerify: true  # Skip TLS verification for internal traffic
+      mode: SIMPLE  # Use simple TLS mode
+
+# Made with Bob
