@@ -136,18 +136,48 @@ bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t deco
 ```
 
 **Suspend/Resume Operations:**
+
+> **⚠️ Known Issue**: The `scale-workers.sh` script may fail when deployments don't have the `llm-d.ai/role` label. Use direct kubectl commands as shown below.
+
 ```bash
-# Suspend (saves current replica counts as annotations)
-bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r 0
-bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t prefill -r 0
+# Step 1: Get deployment names and current replica counts
+kubectl get deployments -n ${NAMESPACE} -o json | \
+  jq -r '.items[] | select(.metadata.name | contains("decode") or contains("prefill")) | "\(.metadata.name) \(.spec.replicas)"'
 
-# Resume (restore from annotations)
-DECODE_REPLICAS=$(kubectl get deployment -n ${NAMESPACE} -l llm-d.ai/role=decode -o jsonpath='{.items[0].metadata.annotations.llm-d\.ai/previous-replicas}')
-PREFILL_REPLICAS=$(kubectl get deployment -n ${NAMESPACE} -l llm-d.ai/role=prefill -o jsonpath='{.items[0].metadata.annotations.llm-d\.ai/previous-replicas}')
+# Step 2: Save replica counts to file (CRITICAL for resumption)
+cat > worker-replicas-backup.txt <<EOF
+# Worker Replica Counts - Saved on $(date -u +"%Y-%m-%d")
+# Namespace: ${NAMESPACE}
 
-bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${DECODE_REPLICAS:-2}
-bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t prefill -r ${PREFILL_REPLICAS:-4}
+DECODE_DEPLOYMENT=<decode-deployment-name>
+DECODE_REPLICAS=<current-decode-count>
+
+PREFILL_DEPLOYMENT=<prefill-deployment-name>
+PREFILL_REPLICAS=<current-prefill-count>
+
+# To resume, run:
+# kubectl scale deployment \$DECODE_DEPLOYMENT --replicas=\$DECODE_REPLICAS -n ${NAMESPACE}
+# kubectl scale deployment \$PREFILL_DEPLOYMENT --replicas=\$PREFILL_REPLICAS -n ${NAMESPACE}
+EOF
+
+# Step 3: Suspend workers (scale to 0)
+kubectl scale deployment <decode-deployment-name> --replicas=0 -n ${NAMESPACE}
+kubectl scale deployment <prefill-deployment-name> --replicas=0 -n ${NAMESPACE}
+
+# Step 4: Verify suspension
+kubectl get deployments -n ${NAMESPACE} <decode-deployment-name> <prefill-deployment-name>
+
+# Resume (restore from backup file)
+source worker-replicas-backup.txt
+kubectl scale deployment $DECODE_DEPLOYMENT --replicas=$DECODE_REPLICAS -n ${NAMESPACE}
+kubectl scale deployment $PREFILL_DEPLOYMENT --replicas=$PREFILL_REPLICAS -n ${NAMESPACE}
 ```
+
+**Why Save to File:**
+- Deployments may not have `llm-d.ai/role` labels for annotation-based tracking
+- File backup provides reliable, human-readable record of previous state
+- Enables easy resumption even if annotations are lost or unavailable
+- Serves as documentation for operational changes
 
 ### Output Format
 
@@ -198,9 +228,10 @@ kubectl scale leaderworkerset <name> --replicas=${COUNT} -n ${NAMESPACE}
 2. Document scaling changes for Helm-managed deployments to track drift
 3. Use shared storage backends in production to minimize cache warmup impact
 4. Prefer WVA autoscaling for production workloads with variable traffic
-5. Always suspend both worker types together to avoid resource waste
-6. Verify saved replica counts before suspending
-7. Test resume in non-production first
+5. **Always save replica counts to a file before suspending** - enables reliable resumption
+6. Always suspend both worker types together to avoid resource waste
+7. Verify deployment names and counts before scaling operations
+8. Test resume in non-production first
 
 
 **Adjustment Recommendations:**
@@ -218,3 +249,67 @@ kubectl wait --for=condition=ready pod -l llm-d.ai/role=decode -n ${NAMESPACE} -
 ```
 
 If issues occur, check pod status with `kubectl describe pod <pod-name> -n ${NAMESPACE}`.
+
+## Troubleshooting
+
+### Issue: scale-workers.sh Script Fails
+
+**Symptoms:**
+- Script exits with error when trying to scale workers
+- Error: "Could not auto-detect deployment" or "no objects passed to scale"
+
+**Root Cause:**
+- Deployments may not have the expected `llm-d.ai/role` labels
+- Script relies on label selectors that may not exist in all deployments
+
+**Solution:**
+Use direct kubectl commands instead:
+```bash
+# 1. List all deployments to find worker names
+kubectl get deployments -n ${NAMESPACE}
+
+# 2. Scale using exact deployment names
+kubectl scale deployment <exact-deployment-name> --replicas=${COUNT} -n ${NAMESPACE}
+```
+
+### Issue: Lost Replica Counts After Suspension
+
+**Symptoms:**
+- Cannot remember how many workers were running before suspension
+- Annotation-based tracking doesn't work
+
+**Root Cause:**
+- Deployments without `llm-d.ai/role` labels can't use annotation tracking
+- Manual scaling operations may not preserve annotations
+
+**Solution:**
+Always save replica counts to a file before suspending:
+```bash
+# Save current state
+kubectl get deployments -n ${NAMESPACE} -o json | \
+  jq -r '.items[] | select(.metadata.name | contains("decode") or contains("prefill")) |
+  "\(.metadata.name) \(.spec.replicas)"' > worker-replicas-backup.txt
+
+# Add resume commands to the file for easy reference
+```
+
+### Issue: Deployments Don't Have Expected Labels
+
+**Symptoms:**
+- Label selectors return no results
+- Cannot use `-l llm-d.ai/role=decode` filters
+
+**Root Cause:**
+- Different deployment methods may use different labeling schemes
+- Helm charts may not apply standard llm-d labels
+
+**Solution:**
+Use deployment name patterns instead:
+```bash
+# Find deployments by name pattern
+kubectl get deployments -n ${NAMESPACE} | grep -E "(decode|prefill)"
+
+# Or use JSON filtering
+kubectl get deployments -n ${NAMESPACE} -o json | \
+  jq -r '.items[] | select(.metadata.name | contains("decode") or contains("prefill")) | .metadata.name'
+```
