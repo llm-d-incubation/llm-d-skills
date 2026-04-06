@@ -1,5 +1,5 @@
 ---
-name: llm-d-scale-workers
+name: scale-llm-d-workers
 description: Execute scaling actions for llm-d prefill/decode workers on Kubernetes/OpenShift. Supports manual scaling (immediate adjustments), automatic WVA autoscaling (continuous saturation-based), HPA with IGW metrics, and suspend/resume operations. Use for handling load changes, optimizing worker ratios, cost savings, or setting up autoscaling.
 ---
 
@@ -62,7 +62,7 @@ Works with P/D disaggregation, standard inference, and LeaderWorkerSet deploymen
 ## Workflow
 
 **CRITICAL RULES:**
-1. **ALWAYS use existing scripts** from `skills/llmd-scale-workers/scripts/`
+1. **ALWAYS use existing scripts** from `skills/scale-llm-d-workers/scripts/`
 2. **NEVER create README.md files** - provide summaries in conversation only
 3. **Script modifications** - If existing scripts need updates, copy them to your deployment directory and modify the copy. Never edit scripts in `scripts/` directly.
 4. **Scripts run non-interactively by default** - designed for automation (use `-i` flag for interactive mode)
@@ -70,7 +70,7 @@ Works with P/D disaggregation, standard inference, and LeaderWorkerSet deploymen
 ### Step 1: Detect Deployment
 
 ```bash
-bash skills/llmd-scale-workers/scripts/detect-deployment.sh ${NAMESPACE}
+bash skills/scale-llm-d-workers/scripts/detect-deployment.sh ${NAMESPACE}
 ```
 
 ### Step 2: Execute Scaling Action
@@ -83,21 +83,21 @@ Best for: Multiple models/variants on shared GPU hardware with cost optimization
 
 ```bash
 # Deploy WVA controller (v0.5.1)
-NAMESPACE=${NAMESPACE} bash skills/llmd-scale-workers/scripts/deploy-wva-controller.sh
+NAMESPACE=${NAMESPACE} bash skills/scale-llm-d-workers/scripts/deploy-wva-controller.sh
 
 # Create VariantAutoscaling resource (requires scaleTargetRef in v0.5.1)
-bash skills/llmd-scale-workers/scripts/create-variantautoscaling.sh \
+bash skills/scale-llm-d-workers/scripts/create-variantautoscaling.sh \
   ${NAMESPACE} ${DEPLOYMENT_NAME}-autoscaler ${TARGET_DEPLOYMENT}
 
 # If auto-detection fails (unhealthy pods), use manual creation:
-bash skills/llmd-scale-workers/scripts/create-variantautoscaling-manual.sh \
+bash skills/scale-llm-d-workers/scripts/create-variantautoscaling-manual.sh \
   ${NAMESPACE} ${DEPLOYMENT_NAME}-autoscaler ${TARGET_DEPLOYMENT} "model/id"
 
 # Fix RBAC if controller shows permission errors
-bash skills/llmd-scale-workers/scripts/fix-wva-rbac.sh ${NAMESPACE}
+bash skills/scale-llm-d-workers/scripts/fix-wva-rbac.sh ${NAMESPACE}
 
 # If controller doesn't detect resources, fix labels
-bash skills/llmd-scale-workers/scripts/fix-controller-instance-labels.sh ${NAMESPACE}
+bash skills/scale-llm-d-workers/scripts/fix-controller-instance-labels.sh ${NAMESPACE}
 ```
 
 **Breaking Change in v0.5.1**: The `scaleTargetRef` field is now **required** in VariantAutoscaling CRD. See [guides/workload-autoscaling/README.wva.md](../../guides/workload-autoscaling/README.wva.md#upgrading) for migration steps.
@@ -132,21 +132,21 @@ See [guides/workload-autoscaling/README.hpa-igw.md](../../guides/workload-autosc
 
 #### Manual Scaling (All Deployment Types)
 ```bash
-bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${COUNT}
+bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${COUNT}
 ```
 
 **Suspend/Resume Operations:**
 ```bash
 # Suspend (saves current replica counts as annotations)
-bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r 0
-bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t prefill -r 0
+bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r 0
+bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t prefill -r 0
 
 # Resume (restore from annotations)
 DECODE_REPLICAS=$(kubectl get deployment -n ${NAMESPACE} -l llm-d.ai/role=decode -o jsonpath='{.items[0].metadata.annotations.llm-d\.ai/previous-replicas}')
 PREFILL_REPLICAS=$(kubectl get deployment -n ${NAMESPACE} -l llm-d.ai/role=prefill -o jsonpath='{.items[0].metadata.annotations.llm-d\.ai/previous-replicas}')
 
-bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${DECODE_REPLICAS:-2}
-bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t prefill -r ${PREFILL_REPLICAS:-4}
+bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${DECODE_REPLICAS:-2}
+bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t prefill -r ${PREFILL_REPLICAS:-4}
 ```
 
 ### Output Format
@@ -168,10 +168,10 @@ bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t prefi
 **Execution Examples:**
 ```bash
 # Using script (recommended) - auto-detects deployment type
-bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${COUNT}
+bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${COUNT}
 
 # Interactive mode (optional)
-bash skills/llmd-scale-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${COUNT} -i
+bash skills/scale-llm-d-workers/scripts/scale-workers.sh -n ${NAMESPACE} -t decode -r ${COUNT} -i
 
 # Direct kubectl (standard deployments)
 kubectl scale deployment <name> --replicas=${COUNT} -n ${NAMESPACE}
