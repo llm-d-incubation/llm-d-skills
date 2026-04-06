@@ -10,12 +10,12 @@ Display current cache configuration for a deployment.
 
 **Usage:**
 ```bash
-bash .claude/skills/llmd-cache-config/scripts/show-current-config.sh <namespace>
+bash skills/configure-cache-llm-d/scripts/show-current-config.sh <namespace>
 ```
 
 **Example:**
 ```bash
-bash .claude/skills/llmd-cache-config/scripts/show-current-config.sh llmd-ns
+bash skills/configure-cache-llm-d/scripts/show-current-config.sh llmd-ns
 ```
 
 **Output:**
@@ -33,7 +33,7 @@ Update cache configuration and apply changes with rolling update.
 
 **Usage:**
 ```bash
-bash .claude/skills/llmd-cache-config/scripts/update-cache-config.sh -n <namespace> [options]
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n <namespace> [options]
 ```
 
 **Options:**
@@ -50,19 +50,19 @@ bash .claude/skills/llmd-cache-config/scripts/update-cache-config.sh -n <namespa
 
 Increase cache capacity:
 ```bash
-bash .claude/skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n llmd-ns -g 0.90 -b 32
 ```
 
 Support longer contexts:
 ```bash
-bash .claude/skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n llmd-ns -m 16384 -g 0.85 -s 30Gi
 ```
 
 Preview changes:
 ```bash
-bash .claude/skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n llmd-ns -g 0.90 --dry-run
 ```
 

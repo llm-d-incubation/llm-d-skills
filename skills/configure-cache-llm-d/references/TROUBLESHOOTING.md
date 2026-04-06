@@ -57,13 +57,13 @@ helmfile apply -n ${NAMESPACE}
 
 1. **For standard deployments**:
    ```bash
-   bash skills/llmd-cache-config/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.95
+   bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.95
    ```
 
 2. **For custom directory structures**:
    ```bash
    # Specify deployment directory explicitly
-   bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+   bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
      -d deployments/your-deployment -n ${NAMESPACE} -g 0.95 -b 64
    ```
 
@@ -125,10 +125,10 @@ kubectl get inferencepool -n ${NAMESPACE} -o yaml | grep -A 10 "prefixCacheScore
 **Solutions**:
 ```bash
 # Reduce GPU memory utilization
-bash skills/llmd-cache-config/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.85
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.85
 
 # Reduce max model length
-bash skills/llmd-cache-config/scripts/update-cache-config.sh -n ${NAMESPACE} -m 4096
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n ${NAMESPACE} -m 4096
 
 # Check actual GPU memory usage
 kubectl exec <pod> -n ${NAMESPACE} -- nvidia-smi
@@ -140,10 +140,10 @@ kubectl exec <pod> -n ${NAMESPACE} -- nvidia-smi
 **Solutions**:
 ```bash
 # Decrease block size for finer-grained matching
-bash skills/llmd-cache-config/scripts/update-cache-config.sh -n ${NAMESPACE} -b 32
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n ${NAMESPACE} -b 32
 
 # Reduce GPU memory to allocate more blocks
-bash skills/llmd-cache-config/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.88 -b 32
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.88 -b 32
 
 # Verify block size consistency
 kubectl logs -l llm-d.ai/role=decode -n ${NAMESPACE} | grep "block_size"
@@ -156,7 +156,7 @@ kubectl get inferencepool -n ${NAMESPACE} -o yaml | grep "lruCapacityPerServer"
 **Solutions**:
 ```bash
 # Increase shared memory size
-bash skills/llmd-cache-config/scripts/update-cache-config.sh -n ${NAMESPACE} -s 40Gi
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n ${NAMESPACE} -s 40Gi
 
 # Verify SHM allocation
 kubectl exec <pod> -n ${NAMESPACE} -- df -h /dev/shm

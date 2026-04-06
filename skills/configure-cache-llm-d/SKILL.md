@@ -1,6 +1,6 @@
 ---
-name: cache-config-llm-d
-description: Modify cache memory settings in existing llm-d deployments without full redeployment. Adjust GPU memory utilization, KV cache capacity, shared memory, block size, and context length to optimize performance for different workload patterns. Use when you need to tune cache settings, increase throughput, reduce latency, or support longer contexts.
+name: configure-cache-llm-d
+description: Configure and tune cache memory settings in existing llm-d deployments. Use this skill when you need to optimize cache performance by adjusting GPU memory utilization, KV cache capacity, shared memory, block size, or context length. Ideal for improving throughput, reducing latency, supporting longer contexts, fixing OOM errors, or tuning cache hit rates in production deployments.
 ---
 
 # llm-d Cache Configuration Skill
@@ -32,7 +32,7 @@ description: Modify cache memory settings in existing llm-d deployments without 
 
 5. **Do NOT modify existing repository code** - Only create new files. Never edit pre-existing repository files.
 
-6. **Script modifications** - If existing scripts need updates, copy them to your deployment directory and modify the copy. Never edit scripts in `skills/llmd-cache-config/scripts/` directly.
+6. **Script modifications** - If existing scripts need updates, copy them to your deployment directory and modify the copy. Never edit scripts in `skills/configure-cache-llm-d/scripts/` directly.
 
 ## Overview
 
@@ -59,20 +59,20 @@ This skill enables you to tune cache performance without redeployment:
 ### 1. Check Current Configuration
 
 ```bash
-bash skills/llmd-cache-config/scripts/show-current-config.sh ${NAMESPACE}
+bash skills/configure-cache-llm-d/scripts/show-current-config.sh ${NAMESPACE}
 ```
 
 ### 2. Update Settings
 
 **Preview first:**
 ```bash
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n ${NAMESPACE} -g 0.90 -b 32 --dry-run
 ```
 
 **Apply:**
 ```bash
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n ${NAMESPACE} -g 0.90 -b 32
 ```
 
@@ -156,35 +156,35 @@ See [`guides/tiered-prefix-cache/cpu/manifests/inferencepool/values.yaml`](../..
 
 ### Increase Cache Hit Rate
 ```bash
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n ${NAMESPACE} -g 0.88 -b 32
 ```
 Reduces GPU memory (0.95→0.88) for more cache, decreases block size (64→32) for finer matching.
 
 ### Support Longer Contexts
 ```bash
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n ${NAMESPACE} -m 16384 -g 0.85 -s 30Gi
 ```
 Increases max length (8192→16384), reduces GPU memory (0.95→0.85), increases SHM (20Gi→30Gi).
 
 ### Maximize Throughput
 ```bash
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n ${NAMESPACE} -g 0.95 -b 64
 ```
 Increases GPU memory (0.90→0.95) for more capacity, standard block size (32→64).
 
 ### Fix OOM Errors
 ```bash
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n ${NAMESPACE} -g 0.85
 ```
 Reduces GPU memory (0.95→0.85) to reduce memory pressure.
 
 ### Adjust Shared Memory for Multi-GPU
 ```bash
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -n ${NAMESPACE} -s 50Gi
 ```
 Increases SHM (20Gi→50Gi) based on tensor parallelism configuration.
@@ -203,7 +203,7 @@ For deployments with custom directory structures or file naming:
 **Using Scripts:**
 ```bash
 # Specify deployment directory explicitly
-bash skills/llmd-cache-config/scripts/update-cache-config.sh \
+bash skills/configure-cache-llm-d/scripts/update-cache-config.sh \
   -d deployments/your-deployment -n ${NAMESPACE} -g 0.95 -b 64
 ```
 
@@ -290,12 +290,12 @@ Before applying cache configuration changes:
 
 3. **Check current configuration**:
    ```bash
-   bash skills/llmd-cache-config/scripts/show-current-config.sh ${NAMESPACE}
+   bash skills/configure-cache-llm-d/scripts/show-current-config.sh ${NAMESPACE}
    ```
 
 4. **Preview changes with --dry-run**:
    ```bash
-   bash skills/llmd-cache-config/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.95 --dry-run
+   bash skills/configure-cache-llm-d/scripts/update-cache-config.sh -n ${NAMESPACE} -g 0.95 --dry-run
    ```
 
 ## Safety Guidelines
