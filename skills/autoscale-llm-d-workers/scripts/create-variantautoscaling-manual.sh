@@ -20,7 +20,7 @@ if [ -z "$TARGET_NAMESPACE" ] || [ -z "$AUTOSCALER_NAME" ] || [ -z "$TARGET_DEPL
     echo "Usage: $0 <namespace> <autoscaler-name> <target-deployment> <model-id>"
     echo ""
     echo "Example:"
-    echo "  $0 dolev-llmd ms-qwen35b-autoscaler ms-qwen35b-llm-d-modelservice-decode 'Qwen/Qwen2.5-32B-Instruct'"
+    echo "  $0 default ms-qwen35b-autoscaler ms-qwen35b-llm-d-modelservice-decode 'Qwen/Qwen2.5-32B-Instruct'"
     exit 1
 fi
 

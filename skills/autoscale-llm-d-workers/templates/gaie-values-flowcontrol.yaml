@@ -1,0 +1,21 @@
+# Template for enabling flow control in gaie-values.yaml
+# Add this to your existing gaie-values.yaml file
+
+inferenceExtension:
+  featureGates:
+    - flowControl
+  monitoring:
+    prometheus:
+      enabled: true
+      namespace: llm-d-monitoring
+      caConfigMap: prometheus-ca
+      caConfigMapKey: ca.crt
+  
+  scheduler:
+    scorers:
+      - name: approximate-prefix-cache-aware
+        weight: 1.0
+      - name: load-aware
+        weight: 1.0
+
+# Made with Bob
