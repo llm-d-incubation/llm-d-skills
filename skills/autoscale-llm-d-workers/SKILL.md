@@ -34,28 +34,16 @@ description: Set up automatic scaling for llm-d prefill/decode workers on Kubern
 
 ## Overview
 
-Set up automatic scaling for prefill and decode workers in existing llm-d deployments:
-- **WVA Autoscaling** - Continuous saturation-based autoscaling for multi-variant deployments
-- **HPA + IGW Metrics** - Native Kubernetes HPA with Inference Gateway metrics for single-model deployments
-- **Cost optimization** - Intelligent capacity allocation across variants
-- **Dynamic scaling** - Responds to actual workload patterns
+Set up automatic scaling for prefill and decode workers in existing llm-d deployments. Works with P/D disaggregation, standard inference, and LeaderWorkerSet deployments.
 
-Works with P/D disaggregation, standard inference, and LeaderWorkerSet deployments.
+### Autoscaling Methods
 
-## Architecture
+| Method | Architecture | Best For | Scaling Signal |
+|--------|-------------|----------|----------------|
+| **WVA** | Controller watches VariantAutoscaling CRDs → queries vLLM saturation metrics → scales deployments | Multi-variant on heterogeneous hardware (e.g., A100s/H100s/L4s) | KV cache saturation, queue depth, cost budgets |
+| **HPA + IGW** | IGW exposes queue metrics → Prometheus scrapes → Prometheus Adapter → K8s HPA scales | Single model on homogeneous hardware | Queue depth, running requests |
 
-**WVA:** Controller watches VariantAutoscaling CRDs → queries vLLM saturation metrics → scales deployments based on thresholds
-
-**HPA:** IGW exposes queue metrics → Prometheus scrapes → Prometheus Adapter exposes to K8s → HPA scales based on thresholds
-
-## Autoscaling Methods
-
-| Method | Best For | Scaling Signal | Cost Optimization | Setup |
-|--------|----------|----------------|-------------------|-------|
-| **WVA** | Multi-variant on heterogeneous hardware | KV cache, queue depth, budgets | Yes (variant-aware) | Controller required |
-| **HPA + IGW** | Single model on homogeneous hardware | Queue depth, running requests | No | Native K8s HPA |
-
-**Choose WVA if:** Multiple variants (e.g., same model on A100s/H100s/L4s), need cost optimization
+**Choose WVA if:** Multiple variants, need cost optimization, variant-aware scaling
 **Choose HPA if:** Single model, simpler setup, native Kubernetes
 
 ## Prerequisites
@@ -135,7 +123,7 @@ bash skills/autoscale-llm-d-workers/scripts/fix-wva-rbac.sh ${NAMESPACE}
 bash skills/autoscale-llm-d-workers/scripts/fix-controller-instance-labels.sh ${NAMESPACE}
 ```
 
-**Breaking Change in v0.5.1**: The `scaleTargetRef` field is now **required** in VariantAutoscaling CRD. See [guides/workload-autoscaling/README.wva.md](../../guides/workload-autoscaling/README.wva.md#upgrading) for migration steps.
+**Breaking Change in v0.5.1**: The `scaleTargetRef` field is now **required** in VariantAutoscaling CRD. See [guides/workload-autoscaling](https://github.com/llm-d/llm-d/tree/main/guides/workload-autoscaling) for migration steps.
 
 **Common Issues:**
 - **RBAC errors**: Controller needs pods list/watch permissions → use `fix-wva-rbac.sh`
@@ -258,7 +246,7 @@ The script will show initial state, send concurrent requests, monitor for 2 minu
 - [test-hpa-scaling.sh](./scripts/test-hpa-scaling.sh) - Test autoscaling with load
 - [templates/gaie-values-flowcontrol.yaml](./templates/gaie-values-flowcontrol.yaml) - Flow control template
 
-See [guides/workload-autoscaling/README.hpa-igw.md](../../guides/workload-autoscaling/README.hpa-igw.md) for detailed HPA setup.
+See [guides/workload-autoscaling](https://github.com/llm-d/llm-d/tree/main/guides/workload-autoscaling) for detailed HPA setup.
 
 ### Output Format
 

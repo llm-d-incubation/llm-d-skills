@@ -41,7 +41,7 @@ The WVA controller uses the `CONTROLLER_INSTANCE` environment variable to filter
 
 ### Method 1: Full WVA Setup (requires guides/workload-autoscaling)
 
-Use this when you have access to the guides/workload-autoscaling directory from the main llm-d repository:
+Use this when you have access to the [guides/workload-autoscaling](https://github.com/llm-d/llm-d/tree/main/guides/workload-autoscaling) directory from the main llm-d repository:
 
 ```bash
 # From llm-d repository root
