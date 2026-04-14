@@ -143,7 +143,7 @@ Write `$COMPARISON_DIR/run-a/run_state.json` with values collected during Steps 
 }
 ```
 
-Make sure `results_path` points to the `results` directory created in Step 1.2. Verify that the benchmark run didn't fail by checking the content of `stderr.log` in `results` and by making sure `results` directory contains json files with metrics collected during the run. If the benchmark run failed, fix the issue and re-run the benchmark. If you are unable to fix the issue, ask the user to provide more information.
+Make sure `results_path` points to the `results` directory created in Step 1.2. Verify that the benchmark run didn't fail by (1) checking the content of `stderr.log` in `results` for error messages indicating premature termination of the run, and (2) making sure `results` directory contains json files (one or more) with metrics collected during the run. If the benchmark run failed, fix the issue and re-run the benchmark. If you are unable to fix the issue, ask the user to provide more information.
 
 ### 1.4 Teardown Run A Stack
 
