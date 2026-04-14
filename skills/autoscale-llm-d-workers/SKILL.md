@@ -118,6 +118,11 @@ PROMETHEUS_URL="https://prometheus.monitoring.svc.cluster.local:9090" \
 bash skills/autoscale-llm-d-workers/scripts/deploy-wva-helm.sh
 ```
 
+**Important Notes:**
+- **Metrics Collection Delay**: After deployment, wait 1-2 minutes for Prometheus to scrape metrics from pods. The VariantAutoscaling will show `METRICSREADY: False` initially.
+- **No Traffic = No Metrics**: If pods have no traffic, metrics will be zero. Send test requests to generate metrics for autoscaling to work.
+- **OpenShift Monitoring**: Ensure namespace has monitoring enabled: `kubectl label namespace ${NAMESPACE} openshift.io/cluster-monitoring=true`
+
 **Legacy manual deployment (not recommended):**
 
 ```bash

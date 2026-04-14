@@ -226,3 +226,90 @@ kubectl edit hpa <name> -n ${NAMESPACE}
 
 # Increase cooldown periods
 # Set more conservative min/max replicas
+```
+
+## Issue: No Saturation Metrics Available
+
+**Symptoms:**
+- VariantAutoscaling shows `METRICSREADY: False`
+- Controller logs show: "No saturation metrics available for model, skipping analysis"
+- Autoscaling doesn't occur despite correct deployment target
+
+**Root Cause:**
+- Prometheus is not scraping metrics from the decode pods yet
+- PodMonitor/ServiceMonitor not configured correctly
+- Metrics collection interval hasn't passed yet
+- No traffic has been sent to the model yet (metrics are zero)
+
+**Diagnosis:**
+```bash
+# 1. Check if PodMonitor exists and is configured correctly
+kubectl get podmonitor -n ${NAMESPACE}
+kubectl get podmonitor <name> -n ${NAMESPACE} -o yaml
+
+# 2. Verify pods are exposing metrics
+POD=$(kubectl get pods -n ${NAMESPACE} -l llm-d.ai/role=decode -o name | head -1)
+kubectl exec -n ${NAMESPACE} $POD -- curl -s localhost:8000/metrics | grep vllm
+
+# 3. Check if Prometheus is scraping (wait 30-60 seconds after deployment)
+# Look for the pod in Prometheus targets UI or query directly
+
+# 4. Check WVA controller logs for metric queries
+kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=workload-variant-autoscaler | grep -i "metric\|query"
+```
+
+**Solutions:**
+
+### Solution 1: Wait for Metrics Collection
+Prometheus scrapes metrics every 30 seconds by default. Wait 1-2 minutes after deployment:
+```bash
+# Wait and check status
+sleep 120
+kubectl get variantautoscaling -n ${NAMESPACE}
+```
+
+### Solution 2: Send Test Traffic to Generate Metrics
+If pods have no traffic, metrics will be zero and WVA may not scale:
+```bash
+# Send test request to generate metrics
+kubectl port-forward -n ${NAMESPACE} svc/your-inference-gateway 8080:80 &
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "Qwen/Qwen3-32B", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+### Solution 3: Verify PodMonitor Label Selectors
+Ensure PodMonitor selectors match your pod labels:
+```bash
+# Get pod labels
+kubectl get pods -n ${NAMESPACE} -l llm-d.ai/role=decode --show-labels
+
+# Compare with PodMonitor selector
+kubectl get podmonitor -n ${NAMESPACE} -o yaml | grep -A 10 "matchLabels"
+
+# If mismatch, update PodMonitor or pod labels
+```
+
+### Solution 4: Check Prometheus ServiceMonitor Configuration
+For OpenShift, ensure the namespace is monitored:
+```bash
+# Check if namespace has monitoring label
+kubectl get namespace ${NAMESPACE} --show-labels
+
+# Add monitoring label if missing
+kubectl label namespace ${NAMESPACE} openshift.io/cluster-monitoring=true
+```
+
+### Solution 5: Verify Prometheus Can Reach Pods
+```bash
+# Check if Prometheus can resolve pod DNS
+kubectl run -n openshift-monitoring test-dns --image=busybox:1.28 --rm -it --restart=Never -- nslookup ms-inference-scheduling-llm-d-modelservice-decode-86c54d46dk4zs.${NAMESPACE}.svc.cluster.local
+
+# Check network policies
+kubectl get networkpolicy -n ${NAMESPACE}
+```
+
+**Expected Behavior After Fix:**
+- After 1-2 minutes, `METRICSREADY` should change to `True`
+- Controller logs should show: "Processing model (V1)" with your model ID
+- Autoscaling decisions will be made based on saturation metrics
