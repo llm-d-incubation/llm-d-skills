@@ -104,8 +104,24 @@ Reason: Single model on homogeneous hardware - simpler setup
 
 #### Option A: WVA Autoscaling
 
+**Recommended: Use the new Helm-based deployment script with auto-detection:**
+
 ```bash
-# Deploy WVA controller (v0.5.1)
+# Deploy WVA controller (v0.5.1) with auto-detection
+NAMESPACE=${NAMESPACE} bash skills/autoscale-llm-d-workers/scripts/deploy-wva-helm.sh
+
+# Or with explicit configuration
+NAMESPACE=${NAMESPACE} \
+MODEL_ID="Qwen/Qwen3-32B" \
+LLMD_DEPLOYMENT_NAME="ms-inference-scheduling-llm-d-modelservice" \
+PROMETHEUS_URL="https://prometheus.monitoring.svc.cluster.local:9090" \
+bash skills/autoscale-llm-d-workers/scripts/deploy-wva-helm.sh
+```
+
+**Legacy manual deployment (not recommended):**
+
+```bash
+# Deploy WVA controller (v0.5.1) - manual ConfigMap approach
 NAMESPACE=${NAMESPACE} bash skills/autoscale-llm-d-workers/scripts/deploy-wva-controller.sh
 
 # Create VariantAutoscaling resource (requires scaleTargetRef in v0.5.1)
