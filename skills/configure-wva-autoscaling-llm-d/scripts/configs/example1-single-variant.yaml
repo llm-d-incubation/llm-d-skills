@@ -1,0 +1,52 @@
+# Example 1: Single Variant with Moderate Scaling
+# User Request: "Set up autoscaling for Qwen/Qwen3-32B on H100s, moderate scaling behavior"
+
+# VariantAutoscaling
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: qwen-32b-autoscaler
+  namespace: llm-inference
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ms-inference-scheduling-llm-d-modelservice
+  modelID: "Qwen/Qwen3-32B"
+  variantCost: "10.0"
+
+---
+# HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: qwen-32b-hpa
+  namespace: llm-inference
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ms-inference-scheduling-llm-d-modelservice
+  maxReplicas: 10
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: wva_desired_replicas
+        selector:
+          matchLabels:
+            variant_name: ms-inference-scheduling-llm-d-modelservice
+      target:
+        type: AverageValue
+        averageValue: "1"
+
+# Saturation Config (use defaults):
+# - kvCacheThreshold: 0.80
+# - queueLengthThreshold: 5
+# - kvSpareTrigger: 0.10
+# - queueSpareTrigger: 3
+
+# Made with Bob

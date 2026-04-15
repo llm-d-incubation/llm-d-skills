@@ -1,0 +1,13 @@
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: <model-name>-autoscaler
+  namespace: <namespace>
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: <deployment-name>
+  modelID: "<vendor>/<model-name>"
+  variantCost: "10.0"  # Cost per replica (for multi-variant optimization)
+
+# Made with Bob

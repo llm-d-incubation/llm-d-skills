@@ -1,0 +1,46 @@
+# Example 2: Multi-Variant Cost Optimization
+# User Request: "I have Llama-70B on both H100 and A100, optimize for cost"
+
+# Premium variant (H100)
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: llama-70b-h100
+  namespace: llm-inference
+  labels:
+    model: llama-70b
+    variant: premium
+    accelerator: h100
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: llama-70b-h100-deployment
+  modelID: "meta/llama-3.1-70b"
+  variantCost: "80.0"  # Higher cost
+
+---
+# Standard variant (A100)
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: llama-70b-a100
+  namespace: llm-inference
+  labels:
+    model: llama-70b
+    variant: standard
+    accelerator: a100
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: llama-70b-a100-deployment
+  modelID: "meta/llama-3.1-70b"
+  variantCost: "40.0"  # Lower cost
+
+---
+# HPA for each variant (similar structure, different targets)
+# Note: Create separate HPA resources for each variant following the hpa-basic.yaml template
+
+# Behavior: WVA will preferentially scale the A100 variant (lower cost) 
+# and only scale H100 when A100 capacity is exhausted.
+
+# Made with Bob
