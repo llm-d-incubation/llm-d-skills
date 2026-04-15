@@ -94,7 +94,19 @@ Display the model name specified in the configuration file to the user for verif
 
 Only if the user wants to change to a different model, check which models are available in the stack deployment. Ask the user select one of them, and update the instantiated configuration file with the selected model name.
 
-### Step 7: Verify the final configuration
+### Step 7: Verify the metrics to collect
+
+Ask the user whether to collect throughput and latency related metrics only (default behavior), or collect all available metrics including cache hit rate related metrics. If all available metrics are requested, make sure the configuration file contains the following section:
+
+```
+env:
+  - name: LLMDBENCH_VLLM_COMMON_METRICS_SCRAPE_ENABLED
+    value: "true"
+  - name: LLMDBENCH_VLLM_COMMON_NAMESPACE
+    value: &namespace
+```    
+
+### Step 8: Verify the final configuration
 
 Display the instantiated configuration file to the user for verification. If the user wants to change any of the configuration parameters, update the instantiated configuration file based on user feedback.
 
@@ -109,7 +121,7 @@ Display the instantiated configuration file to the user for verification. If the
 - **API settings**: Streaming mode, completion type
 - **Parallelism**: Number of parallel workload launcher pods
 
-### Step 8: Obtain the benchmarking script
+### Step 9: Obtain the benchmarking script
 
 First check if `run_only.sh` is already available locally (it ships with the repo at `guides/benchmark/run_only.sh`). If so, use it directly — no download needed:
 ```bash
@@ -122,24 +134,24 @@ curl -L -O https://raw.githubusercontent.com/llm-d/llm-d-benchmark/main/existing
 chmod u+x run_only.sh
 ```
 
-### Step 9: Run benchmarking
+### Step 10: Run benchmarking
 
 Use the command `./run_only.sh -c config.yaml`, monitor its progress and wait for its completion.
 
 Note that the benchmark harness pod may still be running also after the benchmarking run is completed.
 
-### Step 10: Locate and save results
+### Step 11: Locate and save results
 
 Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user.  This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
 
-### Step 11: Run analyses and save them
+### Step 12: Run analyses and save them
 
 Ask the user whether an analysis of raw results is requested. For example, create specific graphs or tables from the raw metric reporting. The user can also tell you what analysis is needed. If the user requests for an analysis, create corresponding analysis scripts, run them, and store them along with their results in the `analysis` directory inside the `results` directory.
 
 
 #### Execution Rules
 
-1. **Run every command** from Steps 1–11 in order using `execute_command`.
+1. **Run every command** from Steps 1–12 in order using `execute_command`.
 2. **After each command**, inspect the output:
    - If the command **succeeds** → proceed to the next command.
    - If the command **fails** → diagnose the error, apply a fix, and re-run before continuing.
