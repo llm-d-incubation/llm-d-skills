@@ -143,11 +143,42 @@ Write `$COMPARISON_DIR/run-a/run_state.json` with values collected during Steps 
 }
 ```
 
-Make sure `results_path` points to the `results` directory created in Step 1.2. Verify that the benchmark run didn't fail by (1) checking the content of `stderr.log` in `results` for error messages indicating premature termination of the run, and (2) making sure `results` directory contains json files (one or more) with metrics collected during the run. If the benchmark run failed, do not tear down the stack. Describe the failure to the user, show the relevant lines from `stderr.log`, and ask them how to proceed (re-run, investigate, or explicitly tear down). If you investigate but unable to fix the issue, ask the user to provide more information.
+Make sure `results_path` points to the `results` directory created in Step 1.2. Verify that the benchmark run didn't fail by (1) checking the content of `stderr.log` in `results` for error messages indicating premature termination of the run, and (2) making sure `results` directory contains json files (one or more) with metrics collected during the run. If the benchmark run failed, fix the issue and re-run the benchmark. If you are unable to fix the issue, ask the user to provide more information.
 
-### 1.4 Teardown Run A Stack
+### 1.4 Verify vLLM Logs Collected
 
-Important: **Proceed to this step only if the benchmark run was successful, or if the user explicitly asked to tear down Run A stack.**
+Before proceeding to teardown, ensure vLLM pod logs have been collected. The **run-llm-d-benchmark** skill should have collected these during Step 12, but verify they exist:
+
+```bash
+# Check if logs directory exists and has content
+if [ ! -d "$COMPARISON_DIR/run-a/results/logs" ] || [ -z "$(ls -A $COMPARISON_DIR/run-a/results/logs 2>/dev/null)" ]; then
+  echo "vLLM logs not found in results/logs/ — collecting now before teardown..."
+  mkdir -p $COMPARISON_DIR/run-a/results/logs
+  
+  # Try different label selectors to find vLLM pods
+  vllm_pods=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=vllm -o name 2>/dev/null)
+  if [ -z "$vllm_pods" ]; then
+    vllm_pods=$(kubectl get pods -n $NAMESPACE -l llm-d.ai/inference-serving=true -o name 2>/dev/null)
+  fi
+  if [ -z "$vllm_pods" ]; then
+    vllm_pods=$(kubectl get pods -n $NAMESPACE | grep -i vllm | awk '{print "pod/" $1}')
+  fi
+  
+  for pod in $vllm_pods; do
+    pod_name=$(echo $pod | sed 's|pod/||')
+    kubectl logs -n $NAMESPACE $pod --timestamps > "$COMPARISON_DIR/run-a/results/logs/${pod_name}.log" 2>&1
+    echo "Collected logs from $pod_name"
+  done
+else
+  echo "vLLM logs already collected in results/logs/"
+fi
+```
+
+**WARNING**: vLLM pod logs are **irretrievably lost after teardown**. If logs could not be collected, consider whether to proceed.
+
+### 1.5 Teardown Run A Stack
+
+Important: **Proceed to this step only if the benchmark run was successful AND vLLM logs have been verified/collected, or if the user explicitly asked to tear down Run A stack.**
 
 Tell the user: *"Benchmark complete — tearing down Run A stack to prepare for Run B."*
 
@@ -181,15 +212,15 @@ Follow the **run-llm-d-benchmark** skill workflow. Results path:
 $COMPARISON_DIR/run-b/results
 ```
 
-### 2.3 Save Run B State
+### 2.3 Save Run B State and Verify vLLM Logs
 
-Write `$COMPARISON_DIR/run-b/run_state.json` with the same structure as Run A. Perform the same check of successful benchmark completion for Run B as in Phase 1.3.
+Write `$COMPARISON_DIR/run-b/run_state.json` with the same structure as Run A.
+
+Then **verify vLLM logs were collected** (same process as Phase 1.4). If logs are missing, collect them before proceeding.
 
 ### 2.4 Teardown Run B Stack
 
-Important: **Proceed to this step only if the benchmark run was successful, or if the user explicitly asked to tear down Run B stack.**
-
-Same constraints as Phase 1.4: remove Helm releases and routing, keep PVCs and namespace.
+Same constraints as Phase 1.5: verify logs collected, then remove Helm releases and routing, keep PVCs and namespace.
 
 ---
 
