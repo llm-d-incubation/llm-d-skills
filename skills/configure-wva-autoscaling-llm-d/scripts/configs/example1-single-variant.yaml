@@ -7,6 +7,9 @@ kind: VariantAutoscaling
 metadata:
   name: qwen-32b-autoscaler
   namespace: llm-inference
+  labels:
+    # REQUIRED: Accelerator label for WVA to process this resource
+    inference.optimization/acceleratorName: nvidia
 spec:
   scaleTargetRef:
     kind: Deployment
@@ -38,7 +41,9 @@ spec:
         name: wva_desired_replicas
         selector:
           matchLabels:
-            variant_name: ms-inference-scheduling-llm-d-modelservice
+            # REQUIRED: Both labels must match for HPA to read metrics correctly
+            variant_name: qwen-32b-autoscaler
+            exported_namespace: llm-inference
       target:
         type: AverageValue
         averageValue: "1"

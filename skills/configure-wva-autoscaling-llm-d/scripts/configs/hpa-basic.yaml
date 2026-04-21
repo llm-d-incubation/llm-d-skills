@@ -21,7 +21,9 @@ spec:
         name: wva_desired_replicas
         selector:
           matchLabels:
-            variant_name: <deployment-name>
+            # REQUIRED: Both labels must match for HPA to read metrics correctly
+            variant_name: <variant-autoscaling-name>
+            exported_namespace: <namespace>
       target:
         type: AverageValue
         averageValue: "1"

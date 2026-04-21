@@ -3,6 +3,9 @@ kind: VariantAutoscaling
 metadata:
   name: <model-name>-autoscaler
   namespace: <namespace>
+  labels:
+    # REQUIRED: Accelerator label for WVA to process this resource
+    inference.optimization/acceleratorName: nvidia
 spec:
   scaleTargetRef:
     kind: Deployment

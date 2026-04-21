@@ -7,11 +7,15 @@ kind: VariantAutoscaling
 metadata:
   name: low-latency-autoscaler
   namespace: llm-inference
+  labels:
+    # REQUIRED: Accelerator label for WVA to process this resource
+    inference.optimization/acceleratorName: nvidia
 spec:
   scaleTargetRef:
     kind: Deployment
     name: ms-inference-scheduling-llm-d-modelservice
   modelID: "Qwen/Qwen3-32B"
+  variantCost: "10.0"
 
 ---
 # HPA with aggressive behavior
@@ -41,7 +45,9 @@ spec:
         name: wva_desired_replicas
         selector:
           matchLabels:
-            variant_name: ms-inference-scheduling-llm-d-modelservice
+            # REQUIRED: Both labels must match for HPA to read metrics correctly
+            variant_name: low-latency-autoscaler
+            exported_namespace: llm-inference
       target:
         type: AverageValue
         averageValue: "1"
