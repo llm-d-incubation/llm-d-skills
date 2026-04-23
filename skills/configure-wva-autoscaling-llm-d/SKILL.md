@@ -204,10 +204,10 @@ See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed configuration exam
   - See `${LLMD_REPO_PATH}/guides/workload-autoscaling/README.wva.md` for detailed steps
 
 ### Testing Scripts
-- **llm-d-benchmark WVA Testing**: `${BENCHMARK_REPO_PATH}/`
-  - Use `./setup/standup.sh --wva` to deploy with WVA
-  - Use `./run.sh` to run workloads and test autoscaling
-  - See `${BENCHMARK_REPO_PATH}/docs/workload-variant-autoscaler.md` for testing guide
+- **llm-d-benchmark WVA Testing**: Benchmark templates are in deployment directories
+  - Templates: `deployments/*/benchmark-templates/` (guide.yaml, guidellm.yaml, sanity.yaml, shared_prefix.yaml)
+  - Use `run_only.sh` with instantiated config files
+  - See the run-llm-d-benchmark skill for detailed workflow
 
 ## Monitoring and Verification
 
@@ -292,11 +292,10 @@ For detailed information, refer to these files in the repositories:
 - **Helmfile Templates**: `guides/workload-autoscaling/helmfile.yaml.gotmpl`
 - **Values Configuration**: `guides/workload-autoscaling/workload-autoscaling/values.yaml`
 
-**llm-d-benchmark Repository** (`${BENCHMARK_REPO_PATH}`):
-- **WVA Testing Guide**: `docs/workload-variant-autoscaler.md`
-- **Setup Scripts**: `setup/standup.sh`, `setup/teardown.sh`
-- **Run Scripts**: `run.sh`
-- **Workload Profiles**: `workload/profiles/guidellm/`
+**Benchmark Templates** (in deployment directories):
+- **Template Location**: `deployments/*/benchmark-templates/`
+- **Available Templates**: guide.yaml, guidellm.yaml, sanity.yaml, shared_prefix.yaml
+- **Benchmark Script**: `run_only.sh` (use with instantiated config files)
 
 **Online Resources**:
 - **WVA GitHub**: https://github.com/llm-d/llm-d-workload-variant-autoscaler
