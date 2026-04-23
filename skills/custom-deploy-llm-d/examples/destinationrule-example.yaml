@@ -1,10 +1,23 @@
+# DestinationRule Example for Istio Gateway Provider
+#
+# This DestinationRule optimizes connection handling to the scheduler service for high-throughput scenarios.
+# Only needed when using Istio as the gateway provider.
+# Typically created automatically by gateway recipes, but can be customized for specific requirements.
+#
+# Key customization points:
+# - metadata.name: Match your scheduler service name
+# - spec.host: Full service FQDN of the scheduler
+# - connectionPool settings: Adjust for expected concurrent requests and throughput
+#
+# For more details see: ${LLMD_PATH}/guides/recipes/gateway/README.md
+
 apiVersion: networking.istio.io/v1
 kind: DestinationRule
 metadata:
-  name: gaie-epp  # Match your EPP service name
-  namespace: your-namespace  # Same namespace as EPP service
+  name: optimized-baseline-scheduler  # Match your scheduler service name
+  namespace: your-namespace  # Same namespace as scheduler service
 spec:
-  host: gaie-epp.your-namespace.svc.cluster.local  # Full service FQDN (gaie-{release}.{namespace}.svc.cluster.local)
+  host: optimized-baseline-scheduler.your-namespace.svc.cluster.local  # Full service FQDN ({guide}-scheduler.{namespace}.svc.cluster.local)
   trafficPolicy:
     connectionPool:
       http:
@@ -19,5 +32,3 @@ spec:
     tls:
       insecureSkipVerify: true  # Skip TLS verification for internal traffic
       mode: SIMPLE  # Use simple TLS mode
-
-# Made with Bob

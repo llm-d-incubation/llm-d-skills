@@ -1,6 +1,6 @@
 ---
 name: custom-deploy-llm-d
-description: Generate custom llm-d deployment configurations for Kubernetes and OpenShift with flexible model, hardware, and gateway settings. Creates helmfile.yaml, httproute.yaml, and deployment README based on user requirements. Use this skill when users want to deploy llm-d with specific customizations, need to adapt existing guides to their infrastructure, want to deploy custom models or configurations, or need a tailored deployment that doesn't match standard Well-lit Path guides exactly. Triggers on requests like "deploy llm-d with custom settings", "create llm-d deployment for my cluster", "I need to deploy model X on hardware Y", or "customize llm-d deployment".
+description: Generate custom llm-d deployment configurations for Kubernetes and OpenShift with flexible model, hardware, and gateway settings. Creates scheduler values, model server kustomizations, and deployment documentation based on user requirements. Use this skill when users want to deploy llm-d with specific customizations, need to adapt existing guides to their infrastructure, want to deploy custom models or configurations, or need a tailored deployment that doesn't match standard Well-Lit Path guides exactly. Triggers on requests like "deploy llm-d with custom settings", "create llm-d deployment for my cluster", "I need to deploy model X on hardware Y", or "customize llm-d deployment".
 ---
 
 # llm-d Custom Deployment Skill
@@ -15,12 +15,12 @@ description: Generate custom llm-d deployment configurations for Kubernetes and 
 >
 > **Never silently create resources.** If you are unsure whether a resource already exists, check first, then notify before acting.
 
-This skill enables AI agents to generate custom llm-d deployment configurations for Kubernetes clusters with general configurations that are not part of the well-lit paths. The agent will create deployment files (helmfile.yaml, httproute.yaml) and a README documenting the configuration.
+This skill enables AI agents to generate custom llm-d deployment configurations for Kubernetes clusters with general configurations that are not part of the Well-Lit Paths. The agent will create deployment files (scheduler values, model server kustomizations, HTTPRoute if needed) and a README documenting the configuration.
 
 ## What Not To Do
 Critical rules to follow when deploying and managing llm-d:
 
-1. **Do NOT change cluster-level definitions** — All changes must be made exclusively inside the designated project namespace. Never modify cluster-wide resources (e.g., ClusterRoles, ClusterRoleBindings, StorageClasses, Nodes, or any resource outside the target namespace). Scope every `kubectl apply`, `helm install`, and `helmfile apply` command to the target namespace using `-n ${NAMESPACE}`.
+1. **Do NOT change cluster-level definitions** — All changes must be made exclusively inside the designated project namespace. Never modify cluster-wide resources (e.g., ClusterRoles, ClusterRoleBindings, StorageClasses, Nodes, or any resource outside the target namespace). Scope every `kubectl apply` and `helm install` command to the target namespace using `-n ${NAMESPACE}`.
 
 2. **Do NOT modify any existing code you did not create** — Only create new files and modify them as needed. Never edit pre-existing files in the repository (e.g., existing `values.yaml`, `helmfile.yaml`, `httproute.yaml`, `README.md`, or any other committed file). If customization is required, create a new file (e.g., `values-custom.yaml`, `httproute-custom.yaml`) and reference it instead.
 
@@ -29,8 +29,8 @@ Critical rules to follow when deploying and managing llm-d:
 ## Core Execution Principle
 
 **EXECUTE, DON'T JUST DOCUMENT**: This skill must actually run deployment commands and validate results. The workflow is:
-1. Generate configuration files
-2. **Execute deployment commands** (helmfile apply, kubectl apply)
+1. Generate configuration files (scheduler values, model server kustomizations)
+2. **Execute deployment commands** (helm install for scheduler, kustomize + kubectl apply for model server)
 3. **Validate deployment** (check pods, resources, connectivity)
 4. **Then generate reusable script** based on what was actually executed
 
@@ -94,7 +94,7 @@ Only ask user for:
 
 | Use Case | Recommended Guide | Why |
 |----------|------------------|-----|
-| General production | `inference-scheduling` | Intelligent request routing, good default |
+| General production | `optimized-baseline` | Intelligent request routing, good default |
 | High throughput | `pd-disaggregation` | Separates prefill/decode for efficiency |
 | Long context | `precise-prefix-cache-aware` | Optimizes prefix caching |
 | Multi-model | `wide-ep-lws` | Wide expert parallelism |
@@ -107,67 +107,78 @@ Only ask user for:
 **Copy guide to workspace:**
 ```
 deployments/deploy-{namespace}-{timestamp}/
-├── helmfile.yaml          # Copied and customized
-├── httproute.yaml         # Copied and customized  
-├── values/                # Custom values files
-│   ├── infra-values.yaml
-│   └── modelservice-values.yaml
+├── scheduler/             # Scheduler configuration
+│   ├── base.values.yaml
+│   ├── features/
+│   └── {guide}.values.yaml
+├── modelserver/           # Model server kustomization
+│   └── kustomization.yaml
+├── httproute.yaml         # HTTPRoute (if using Gateway API proxy mode)
 ├── README.md              # Deployment documentation
 └── deploy.sh              # Deployment script
 ```
 
 **Customize based on requirements:**
 
-1. **Helmfile modifications:**
-   - Update namespace references
-   - Adjust environment configurations
-   - Modify chart versions if needed
-   - Add custom values files
-***Placeholder Replacement**: Before writing any files, replace ALL placeholders with actual values:
+1. **Scheduler values customization:**
+   - Layer values files: base.values.yaml + features/*.values.yaml + {guide}.values.yaml
+   - Set provider name (gke, istio, none)
+   - Configure monitoring and features
+   - Adjust scheduler-specific settings
 
-2. **HTTPRoute customization:**
+2. **Model server kustomization:**
+   - Select appropriate accelerator overlay (cuda, tpu, xpu, hpu, cpu)
+   - Select server type (vllm, sglang)
+   - Customize model configuration (name, revision, quantization)
+   - Adjust resource requests/limits
+   - Configure parallelism strategy (TP, DP, EP, PP)
+   - **CRITICAL**: Remove `rdma/ib` resource requests if RDMA not detected in cluster
+   - **CRITICAL**: For models >30B, increase startup probe: `failureThreshold: 120, periodSeconds: 30`
+
+3. **HTTPRoute customization (Gateway API proxy mode only):**
    - Configure gateway references
    - Set up routing rules
    - Add custom headers or filters
    - Configure TLS if needed
    - See detailed HTTPRoute examples and guidance below
 
-3. **DestinationRule for EPP service (Istio only):**
-   - Configure connection pooling and timeouts for the EPP (Endpoint Picker) service
+4. **DestinationRule for scheduler service (Istio only):**
+   - Configure connection pooling and timeouts for the scheduler service
    - Required for high-throughput scenarios to prevent connection bottlenecks
-   - Created by the `llm-d-infra` chart when using Istio gateway provider
-   - See [Gateway Customization docs](../docs/customizing-your-gateway.md) for details
-
-4. **Values files:**
-   - Model configuration (name, revision, quantization)
-   - Resource requests/limits
-   - Hardware-specific settings
-   - Scaling parameters
-   - **CRITICAL**: Remove `rdma/ib` resource requests if RDMA not detected in cluster
-   - **CRITICAL**: For models >30B, increase startup probe: `failureThreshold: 120, periodSeconds: 30`
-   - Storage configuration
+   - Typically created automatically by gateway recipes
+   - See `${LLMD_PATH}/guides/recipes/gateway/README.md` for details
 
 **Example customizations:**
 
 ```yaml
-# values/modelservice-values.yaml
-modelService:
-  model:
-    name: "meta-llama/Llama-3.1-70B-Instruct"
-    revision: "main"
-  
-  resources:
-    requests:
-      nvidia.com/gpu: 4
-      memory: "64Gi"
-    limits:
-      nvidia.com/gpu: 4
-      memory: "64Gi"
-  
-  vllm:
-    extraArgs:
-      - "--max-model-len=8192"
-      - "--tensor-parallel-size=4"
+# scheduler/{guide}.values.yaml
+provider:
+  name: istio  # or gke, none
+
+# modelserver/kustomization.yaml
+resources:
+  - ../../recipes/modelserver/base
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: MODEL_NAME
+            value: "meta-llama/Llama-3.1-70B-Instruct"
+          - name: TENSOR_PARALLEL_SIZE
+            value: "4"
+          - name: MAX_MODEL_LEN
+            value: "8192"
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            nvidia.com/gpu: 4
+            memory: "64Gi"
+          limits:
+            nvidia.com/gpu: 4
+            memory: "64Gi"
 ```
 
 ### Step 5: Prerequisites Verification
@@ -188,55 +199,47 @@ modelService:
    - Verify storage class availability
    - Create PVC if required
 
-4. **Gateway provider ready:**
+4. **Gateway provider ready (if using Gateway API proxy mode):**
    - Verify gateway pods are running
-   - Check CRDs are installed
-   - Confirm gateway configuration
+   - Check Gateway API CRDs are installed: `kubectl get crd gateways.gateway.networking.k8s.io`
+   - Confirm gateway resource exists: `kubectl get gateway -n {namespace}`
 
 ### Step 6: Execute Deployment
 
 **CRITICAL: Actually execute the deployment commands, don't just create scripts.**
 
 **Pre-deployment checks:**
-- Ensure helmfile uses `.gotmpl` extension if using Go templates
-- Copy gateway config files to workspace (don't reference external paths)
-- Create required namespaces (target + llm-d-monitoring if using autoscaler)
-- Create Prometheus CA placeholder: `echo "# placeholder" > /tmp/prometheus-ca.crt`
+- Verify LLMD_PATH is set and points to llm-d repository
+- Create required namespaces: `kubectl create namespace {namespace}`
+- Ensure HuggingFace token secret exists if required by model
+- For Gateway API proxy mode: ensure gateway provider is installed and gateway resource exists
 
 1. **Navigate to workspace:**
    ```bash
    cd deployments/deploy-{namespace}-{timestamp}
    ```
 
-2. **Execute helmfile deployment:**
-   ```bash
-   helmfile apply -n {namespace} [environment-flags]
-   ```
+2. **Install the Scheduler:**
    
-   Add environment flags based on detected configuration:
-   - Hardware: `-e cuda`, `-e tpu`, `-e xpu`, `-e hpu`
-   - Gateway: `-e istio`, `-e kgateway`, `-e agentgateway`
+   Follow the current install flow from `${LLMD_PATH}/guides/01_installing_a_guide.md`:
+   - **Standalone mode** is the default and simplest path
+   - **Gateway API proxy mode** is used when the user needs a full gateway provider
    
-   **If CRD conflict occurs:** Delete CRD and retry: `kubectl delete crd variantautoscalings.llmd.ai`
+   Install the scheduler using the guide's layered Helm values and the appropriate chart for the chosen mode.
 
-3. **Monitor deployment progress:**
+3. **Deploy the Model Server:**
+   
+   Deploy the model server using the guide's `kustomize` overlay:
+   ```bash
+   kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl apply -n {namespace} -f -
+   ```
+
+4. **Monitor deployment progress:**
    - Watch pods starting: `kubectl get pods -n {namespace} -w`
    - Wait for all pods to reach Running state
    - Check for any errors or issues
    - **Note**: Large models (>30B) may take 5-10 minutes to load. CrashLoopBackOff during initial load is expected.
    - Clean up old pending pods: `kubectl delete pod -n {namespace} --field-selector status.phase=Pending`
-   - Note: Autoscaler pods may crash (known issue) - core inference unaffected
-
-4. **Apply HTTPRoute:**
-   Once helmfile deployment completes and pods are running:
-   ```bash
-   kubectl apply -f httproute.yaml -n {namespace}
-   ```
-
-5. **Verify HTTPRoute is accepted:**
-   ```bash
-   kubectl get httproute -n {namespace}
-   ```
 
 ### Step 7: Validate Deployment
 
@@ -249,15 +252,16 @@ modelService:
    - Review logs if issues: `kubectl logs {pod} -n {namespace}`
 
 2. **Resource status:**
-   - InferencePool shows Ready
-   - Gateway shows Programmed
-   - HTTPRoute shows Accepted
+   - Scheduler pods are Running and Ready
+   - Model server pods are Running and Ready
+   - For Gateway API proxy mode: Gateway shows Programmed, HTTPRoute shows Accepted
    - Check PVCs (if applicable)
 
 3. **Connectivity test:**
-   - Get gateway address: `kubectl get gateway -n {namespace}`
-   - Test endpoint: `curl http://{gateway-address}/v1/models`
-   - Send test request: `curl http://{gateway-address}/v1/chat/completions -d {...}`
+   - Expose the endpoint using the current verification guide: port-forward, external IP, ingress, or route as described in `${LLMD_PATH}/guides/02_verifying_a_guide.md`
+   - Test endpoint: `curl ${ENDPOINT}/v1/models`
+   - Send test request: `curl ${ENDPOINT}/v1/completions -d {...}`
+   - Query `/v1/models` first and use the actual returned model name in completion requests
    Model loading can take several minutes depending on model size
 
 
@@ -267,11 +271,11 @@ modelService:
    - Verify response times meet requirements
 
 **Success Criteria:**
-- All pods in Running state with N/N ready
-- InferencePool shows Ready status
-- Gateway shows Programmed status
-- HTTPRoute shows Accepted status
-- Inference endpoint responds to requests
+- All required pods are Running state with N/N ready
+- Scheduler resources are ready
+- Gateway resources are healthy when gateway mode is used
+- `/v1/models` responds successfully
+- `/v1/completions` responds successfully
 
 ### Step 8: Generate Reusable Artifacts
 
@@ -315,18 +319,19 @@ kubectl get secret llm-d-hf-token -n $NAMESPACE || {
   exit 1
 }
 
-# Deploy
-echo "Deploying llm-d..."
+# Deploy scheduler
+echo "Installing scheduler..."
 cd $(dirname $0)
-helmfile apply -n $NAMESPACE
+# Add actual helm install commands based on mode
 
-# Apply routing
-kubectl apply -f httproute.yaml -n $NAMESPACE
+# Deploy model server
+echo "Deploying model server..."
+kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl apply -n $NAMESPACE -f -
 
 # Validate
 echo "Validating deployment..."
-kubectl wait --for=condition=Ready inferencepool --all -n $NAMESPACE --timeout=300s
-kubectl get pods,inferencepool,gateway,httproute -n $NAMESPACE
+kubectl get pods -n $NAMESPACE
+kubectl get all -n $NAMESPACE
 
 echo "Deployment complete!"
 ```
@@ -458,10 +463,11 @@ A successful deployment should have:
 
 ### Documentation
 - [llm-d Project](https://github.com/llm-d/llm-d)
-- [Project Overview](https://github.com/llm-d/llm-d/blob/main/PROJECT.md)
-- [Well-lit Paths](https://github.com/llm-d/llm-d/blob/main/guides/README.md)
-- [Quickstart Guide](https://github.com/llm-d/llm-d/blob/main/guides/QUICKSTART.md)
-- [Gateway Customization](https://github.com/llm-d/llm-d/blob/main/docs/customizing-your-gateway.md)
+- [Guide Index](https://github.com/llm-d/llm-d/blob/main/guides/README.md)
+- [Installing a Guide](https://github.com/llm-d/llm-d/blob/main/guides/01_installing_a_guide.md)
+- [Verifying a Guide](https://github.com/llm-d/llm-d/blob/main/guides/02_verifying_a_guide.md)
+- [Benchmarking a Guide](https://github.com/llm-d/llm-d/blob/main/guides/03_benchmarking_a_guide.md)
+- [llm-d-benchmark CLI](https://github.com/llm-d/llm-d-benchmark)
 
 ### External Resources
 - [Gateway API Inference Extension](https://github.com/kubernetes-sigs/gateway-api-inference-extension)
