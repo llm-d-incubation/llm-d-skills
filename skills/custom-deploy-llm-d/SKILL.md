@@ -41,12 +41,16 @@ Do not stop after creating files - always execute the deployment and validate it
 ### Step 1: Project Setup
 
 **Check for llm-d repository:**
-- Use `LLMD_PATH` environment variable if set;
-- If not set check if current directory is llm-d repository 
+- Use `LLMD_PATH` environment variable if set
+- If not set, check if current directory is llm-d repository
 - If not found, offer options:
   - User provides path to existing clone
-  - Clone from GitHub form https://github.com/llm-d/llm-d,
-  - Work with files from internet (fetch specific files as needed) form https://github.com/llm-d/llm-d,
+  - Clone from GitHub: `git clone https://github.com/llm-d/llm-d.git`
+  
+**After locating the repository, always set LLMD_PATH:**
+```bash
+export LLMD_PATH=/path/to/llm-d
+```
   
 **Set up workspace:**
 - Naming convention: `{model-short-name}-{namespace}-{DDMMYYYY}` (e.g., `qwen25-llmd-25032026`)
@@ -222,7 +226,7 @@ patches:
 
 2. **Install the Scheduler:**
    
-   Follow the current install flow from `${LLMD_PATH}/guides/01_installing_a_guide.md`:
+   Follow the current install flow documented in `${LLMD_PATH}/guides/01_installing_a_guide.md`:
    
    **Choose deployment mode:**
    - **Standalone mode (default)** - Simplest path, no external proxy needed. Scheduler includes Envoy sidecar.
@@ -230,6 +234,7 @@ patches:
    
    **Standalone mode:**
    ```bash
+   cd ${LLMD_PATH}
    helm install <guide>-scheduler \
      oci://registry.k8s.io/gateway-api-inference-extension/charts/standalone \
      -f guides/recipes/scheduler/base.values.yaml \
@@ -241,7 +246,8 @@ patches:
    
    **Gateway API proxy mode:**
    ```bash
-   # First deploy gateway (see guides/recipes/gateway/README.md)
+   cd ${LLMD_PATH}
+   # First deploy gateway (see ${LLMD_PATH}/guides/recipes/gateway/README.md)
    kubectl apply -k guides/recipes/gateway/<provider> -n ${NAMESPACE}
    
    # Then install scheduler
@@ -258,6 +264,7 @@ patches:
    
    Deploy the model server using the guide's `kustomize` overlay:
    ```bash
+   cd ${LLMD_PATH}
    kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl apply -n {namespace} -f -
    ```
 
@@ -488,15 +495,19 @@ A successful deployment should have:
 
 ## Additional Resources
 
-### Documentation
-- [llm-d Project](https://github.com/llm-d/llm-d)
-- [Well-Lit Path Guides](https://github.com/llm-d/llm-d/blob/main/guides/README.md)
-- [Installing a Guide](https://github.com/llm-d/llm-d/blob/main/guides/01_installing_a_guide.md)
-- [Verifying a Guide](https://github.com/llm-d/llm-d/blob/main/guides/02_verifying_a_guide.md)
-- [Benchmarking a Guide](https://github.com/llm-d/llm-d/blob/main/guides/03_benchmarking_a_guide.md)
-- [Customizing a Guide](https://github.com/llm-d/llm-d/blob/main/guides/04_customizing_a_guide.md)
-- [Scheduler Recipes](https://github.com/llm-d/llm-d/blob/main/guides/recipes/scheduler/README.md)
-- [Gateway Recipes](https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/README.md)
+### Documentation (Local Repository)
+All documentation should be accessed from your local llm-d repository at `${LLMD_PATH}`:
+- **Well-Lit Path Guides**: `${LLMD_PATH}/guides/README.md`
+- **Installing a Guide**: `${LLMD_PATH}/guides/01_installing_a_guide.md`
+- **Verifying a Guide**: `${LLMD_PATH}/guides/02_verifying_a_guide.md`
+- **Benchmarking a Guide**: `${LLMD_PATH}/guides/03_benchmarking_a_guide.md`
+- **Customizing a Guide**: `${LLMD_PATH}/guides/04_customizing_a_guide.md`
+- **Scheduler Recipes**: `${LLMD_PATH}/guides/recipes/scheduler/README.md`
+- **Gateway Recipes**: `${LLMD_PATH}/guides/recipes/gateway/README.md`
+- **Model Server Recipes**: `${LLMD_PATH}/guides/recipes/modelserver/README.md`
+
+### External Resources
+- [llm-d Project on GitHub](https://github.com/llm-d/llm-d)
 - [llm-d-benchmark CLI](https://github.com/llm-d/llm-d-benchmark)
 
 ### External Resources
