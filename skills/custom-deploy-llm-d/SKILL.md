@@ -94,11 +94,12 @@ Only ask user for:
 
 | Use Case | Recommended Guide | Why |
 |----------|------------------|-----|
-| General production | `optimized-baseline` | Intelligent request routing, good default |
-| High throughput | `pd-disaggregation` | Separates prefill/decode for efficiency |
-| Long context | `precise-prefix-cache-aware` | Optimizes prefix caching |
-| Multi-model | `wide-ep-lws` | Wide expert parallelism |
-| Auto-scaling | `workload-autoscaling` | Dynamic scaling based on load |
+| General production | `optimized-baseline` | Intelligent request routing with prefix-cache and load-aware balancing (default) |
+| Enhanced prefix routing | `precise-prefix-cache-aware` | Adds precise global KV cache indexing to optimized-baseline |
+| High throughput (large models) | `pd-disaggregation` | Separates prefill/decode for improved throughput and QoS stability |
+| Large MoE models | `wide-ep-lws` | Expert parallelism for models like DeepSeek-R1 across multiple nodes |
+| Extended cache capacity | `tiered-prefix-cache` | Offloads KV cache to CPU/disk for multi-turn workloads |
+| Auto-scaling | `workload-autoscaling` | SLO-aware autoscaling based on queue depth and KV cache pressure |
 
 **Explain the choice** - Help user understand why this guide fits their needs
 
@@ -222,10 +223,36 @@ patches:
 2. **Install the Scheduler:**
    
    Follow the current install flow from `${LLMD_PATH}/guides/01_installing_a_guide.md`:
-   - **Standalone mode** is the default and simplest path
-   - **Gateway API proxy mode** is used when the user needs a full gateway provider
    
-   Install the scheduler using the guide's layered Helm values and the appropriate chart for the chosen mode.
+   **Choose deployment mode:**
+   - **Standalone mode (default)** - Simplest path, no external proxy needed. Scheduler includes Envoy sidecar.
+   - **Gateway API proxy mode** - For production with full gateway provider (Istio, Agentgateway, GKE Gateway)
+   
+   **Standalone mode:**
+   ```bash
+   helm install <guide>-scheduler \
+     oci://registry.k8s.io/gateway-api-inference-extension/charts/standalone \
+     -f guides/recipes/scheduler/base.values.yaml \
+     -f guides/recipes/scheduler/features/monitoring.values.yaml \
+     -f guides/<guide>/scheduler/<guide>.values.yaml \
+     --set provider.name=<gke|istio|none> \
+     -n ${NAMESPACE} --version v1.4.0
+   ```
+   
+   **Gateway API proxy mode:**
+   ```bash
+   # First deploy gateway (see guides/recipes/gateway/README.md)
+   kubectl apply -k guides/recipes/gateway/<provider> -n ${NAMESPACE}
+   
+   # Then install scheduler
+   helm install <guide>-scheduler \
+     oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool \
+     -f guides/recipes/scheduler/base.values.yaml \
+     -f guides/recipes/scheduler/features/monitoring.values.yaml \
+     -f guides/<guide>/scheduler/<guide>.values.yaml \
+     --set provider.name=<gke|istio|none> \
+     -n ${NAMESPACE} --version v1.4.0
+   ```
 
 3. **Deploy the Model Server:**
    
@@ -463,10 +490,13 @@ A successful deployment should have:
 
 ### Documentation
 - [llm-d Project](https://github.com/llm-d/llm-d)
-- [Guide Index](https://github.com/llm-d/llm-d/blob/main/guides/README.md)
+- [Well-Lit Path Guides](https://github.com/llm-d/llm-d/blob/main/guides/README.md)
 - [Installing a Guide](https://github.com/llm-d/llm-d/blob/main/guides/01_installing_a_guide.md)
 - [Verifying a Guide](https://github.com/llm-d/llm-d/blob/main/guides/02_verifying_a_guide.md)
 - [Benchmarking a Guide](https://github.com/llm-d/llm-d/blob/main/guides/03_benchmarking_a_guide.md)
+- [Customizing a Guide](https://github.com/llm-d/llm-d/blob/main/guides/04_customizing_a_guide.md)
+- [Scheduler Recipes](https://github.com/llm-d/llm-d/blob/main/guides/recipes/scheduler/README.md)
+- [Gateway Recipes](https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/README.md)
 - [llm-d-benchmark CLI](https://github.com/llm-d/llm-d-benchmark)
 
 ### External Resources
@@ -475,6 +505,16 @@ A successful deployment should have:
 - [Gateway API Documentation](https://gateway-api.sigs.k8s.io)
 
 ### Helm Chart Repositories
-- **llm-d-infra**: `https://llm-d-incubation.github.io/llm-d-infra/` - Infrastructure components
-- **llm-d-modelservice**: `https://llm-d-incubation.github.io/llm-d-modelservice/` - Model server
-- **inferencepool**: `oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool` - Inference scheduler
+- **standalone**: `oci://registry.k8s.io/gateway-api-inference-extension/charts/standalone` - Scheduler with Envoy sidecar (v1.4.0)
+- **inferencepool**: `oci://registry.k8s.io/gateway-api-inference-extension/charts/inferencepool` - Scheduler for Gateway API mode (v1.4.0)
+
+### Available Well-Lit Path Guides
+Current guides in llm-d repository:
+1. **optimized-baseline** - Default production path with prefix-cache and load-aware routing
+2. **precise-prefix-cache-aware** - Enhanced with precise global KV cache indexing
+3. **pd-disaggregation** - Prefill/decode separation for medium/large models
+4. **wide-ep-lws** - Expert parallelism for large MoE models (DeepSeek-R1)
+5. **tiered-prefix-cache** - KV cache offloading to CPU/disk/shared storage
+6. **workload-autoscaling** - SLO-aware autoscaling (experimental)
+7. **predicted-latency-based-scheduling** - XGBoost-based latency prediction (experimental)
+8. **asynchronous-processing** - Queue-based async inference (experimental)
