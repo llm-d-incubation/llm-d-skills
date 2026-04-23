@@ -1,6 +1,6 @@
 ---
 name: deploy-llm-d
-description: Configure and deploy an llm-d stack  on an existing Kubernetes and OpenShift cluster using Well-Lit Path guides. Use this skill when users want to deploy llm-d , verify, customize llm-d.
+description: Configure and deploy an llm-d stack on an existing Kubernetes and OpenShift cluster using Well-Lit Path guides. Use this skill when users want to deploy, verify, or customize llm-d.
 ---
 
 # Deploy llm-d Stack
