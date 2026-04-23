@@ -34,7 +34,7 @@ description: Configure and optimize Workload Variant Autoscaler (WVA) for llm-d 
 1. Check for repositories in common locations
 2. Ask user for paths if not found
 3. Clone missing repositories with user approval
-4. Set environment variables: `LLMD_REPO_PATH`, `WVA_REPO_PATH`, `BENCHMARK_REPO_PATH`
+4. Set environment variables: `LLMD_REPO_PATH`, `WVA_REPO_PATH`
 
 ## Overview
 This skill helps you configure Workload Variant Autoscaler (WVA) for llm-d inference deployments based on your specific requirements. WVA provides intelligent autoscaling using KV cache saturation and queue depth metrics, with support for multi-variant cost optimization.

@@ -292,8 +292,8 @@ For issues not covered here:
    - llm-d WVA Guide: `${LLMD_REPO_PATH}/guides/workload-autoscaling/README.wva.md`
 2. **Review WVA logs**: Look for ERROR or WARN messages
 3. **Check Prometheus metrics**: Verify vLLM metrics are being scraped
-4. **Test with llm-d-benchmark**: Use standard workloads to validate behavior
-   - Testing guide: `${BENCHMARK_REPO_PATH}/docs/workload-variant-autoscaler.md`
+4. **Test with llm-d-benchmark**: Use benchmark templates to validate behavior
+   - Templates: `deployments/*/benchmark-templates/` (guide.yaml, guidellm.yaml, sanity.yaml, shared_prefix.yaml)
 5. **Community support**: Join llm-d Slack or GitHub discussions
 
 ## Useful Commands Reference
