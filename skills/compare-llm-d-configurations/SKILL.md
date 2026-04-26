@@ -1,6 +1,6 @@
 ---
 name: compare-llm-d-configurations
-description: Compare the benchmark performance of two llm-d stack configurations end-to-end. For each configuration, deploys the stack, runs a benchmark, tears down, then generates a side-by-side results comparison. One configuration may already have been benchmarked previously — in that case, only the new configuration is deployed and benchmarked, and its results are compared against the existing ones. Use this skill whenever the user wants to A/B test llm-d configurations, compare llm-d config to baseline, compare models or serving strategies, evaluate the effect of a configuration change, run two benchmarks back-to-back for comparison, or compare a new run against a previous one — even if they say "which is faster", "test two setups", "compare these configs", "compare against my last run", or don't use "A/B" or "benchmark" terminology explicitly.
+description: Compare the benchmark performance of two llm-d stack configurations end-to-end. For each configuration, deploys the stack, runs a benchmark, tears down, then generates a side-by-side results comparison. One configuration may already have been benchmarked previously — in that case, only the new configuration is deployed and benchmarked, and its results are compared against the existing ones. Use this skill whenever the user wants to A/B test llm-d configurations, compare llm-d config to baseline with no llm-d Inference Scheduler, compare models or serving strategies, evaluate the effect of a configuration change, run two benchmarks back-to-back for comparison, or compare a new run against a previous one — even if they say "which is faster", "test two setups", "compare these configs", "compare against my last run", or don't use "A/B" or "benchmark" terminology explicitly.
 ---
 
 # Compare llm-d Configurations
@@ -106,13 +106,13 @@ Work through the following steps for the first configuration.
 Tell the user: *"Starting Run A: $RUN_A_LABEL — deploying the stack."*
 
 Follow the **deploy-llm-d** skill workflow. The namespace is already set from Phase 0.
-**If Run A is a baseline configuration** (shouldn't use llm-d scheduling), follow the **Baseline Configuration Setup** procedure in the Appendix after deployment completes.
+**If Run A is a baseline, "no llm-d scheduler", configuration**, follow the **Baseline Configuration Setup** procedure in the provided resources folder after deployment completes.
 
 ### 1.2 Run Benchmark
 
 Tell the user: *"Stack is up — running benchmark for Run A."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run A is a baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. When the skill asks where to save results, use:
+Follow the **run-llm-d-benchmark** skill workflow, if Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. When the skill asks where to save results, use:
 
 ```
 $COMPARISON_DIR/run-a/results
@@ -171,13 +171,13 @@ Repeat the same sequence for the second configuration.
 Tell the user: *"Starting Run B: $RUN_B_LABEL — deploying the stack."*
 
 Follow the **llm-d-kubernetes-deployment** skill workflow in the same namespace.
-**If Run B is a baseline configuration** (shouldn't use llm-d scheduling), follow the **Baseline Configuration Setup** procedure in the Appendix after deployment completes.
+**If Run B is a baseline, "no llm-d scheduler", configuration** (shouldn't use llm-d scheduling), follow the **Baseline Configuration Setup** procedure in the provided resources folder after deployment completes.
 
 ### 2.2 Run Benchmark
 
 Tell the user: *"Stack is up — running benchmark for Run B."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run B is a baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. Results path:
+Follow the **run-llm-d-benchmark** skill workflow, if Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. Results path:
 
 ```
 $COMPARISON_DIR/run-b/results
@@ -400,58 +400,3 @@ Critical rules to follow when comparing =llm-d configurations:
 
 
 ---
-
-## Appendix: Baseline Configuration Setup
-
-This procedure is used when deploying a baseline configuration (one that uses direct service cluster IP instrad of llm-d scheduling).
-Only if the run is labeled as "baseline" or the user indicates it's a baseline configuration. It assumes a stack is already deployed.
-
-### Steps
-
-1. **Create or verify baseline service**:
-
-   Check if the service exists:
-   ```bash
-   kubectl get svc llm-d-baseline-model-server -n $NAMESPACE
-   ```
-
-   If the service does not exist, inform the user that you will create it, then apply the baseline service YAML in the namespace:
-   ```bash
-   cat <<EOF | kubectl apply -n $NAMESPACE -f -
-   apiVersion: v1
-   kind: Service
-   metadata:
-     name: llm-d-baseline-model-server
-   spec:
-     selector:
-       llm-d.ai/inference-serving: "true"
-     ports:
-     - name: http
-       protocol: TCP
-       port: 8000
-       targetPort: 8000
-     type: ClusterIP
-   EOF
-   ```
-
-2. **Verify the service has endpoints**:
-   ```bash
-   kubectl get endpoints llm-d-baseline-model-server -n $NAMESPACE
-   ```
-
-   If no endpoints exist, check the running pod labels:
-   ```bash
-   kubectl get pods -n $NAMESPACE -l llm-d.ai/inference-serving=true
-   ```
-
-   If no pods match, list all pods and their labels to find the correct selector:
-   ```bash
-   kubectl get pods -n $NAMESPACE --show-labels
-   ```
-
-   Inform the user which label should be used and update the baseline service selector accordingly.
-
-3. **Set baseline base_url**: When configuring the benchmark (in steps 1.2 or 2.2), ensure the config.yaml uses:
-   ```yaml
-   base_url: http://llm-d-baseline-model-server.<namespace>.svc.cluster.local:8000
-   ```
