@@ -44,7 +44,7 @@ Modify cache settings in existing llm-d deployments: GPU memory utilization, blo
 
 ## When to Use
 
-This skill enables you to tune cache performance without redeployment:
+This skill enables you to tune cache performance without redeploying the llm-d deployment, changes are applied via rolling updates that redeploy vLLM pods:
 
 - **GPU Memory Utilization** (`-g`): Adjust GPU memory allocation (0.0-1.0) to balance throughput vs. OOM risk
 - **Block Size** (`-b`): Change cache granularity (16-128 tokens) to optimize cache hit rates and memory efficiency
