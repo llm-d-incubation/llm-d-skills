@@ -1,6 +1,6 @@
 ---
 name: compare-llm-d-configurations
-description: Compare the benchmark performance of two llm-d stack configurations end-to-end. For each configuration, deploys the stack, runs a benchmark, tears down, then generates a side-by-side results comparison. One configuration may already have been benchmarked previously — in that case, only the new configuration is deployed and benchmarked, and its results are compared against the existing ones. Use this skill whenever the user wants to A/B test llm-d configurations, compare models or serving strategies, evaluate the effect of a configuration change, run two benchmarks back-to-back for comparison, or compare a new run against a previous one — even if they say "which is faster", "test two setups", "compare these configs", "compare against my last run", or don't use "A/B" or "benchmark" terminology explicitly.
+description: Compare the benchmark performance of two llm-d stack configurations end-to-end. For each configuration, deploys the stack, runs a benchmark, tears down, then generates a side-by-side results comparison. One configuration may already have been benchmarked previously — in that case, only the new configuration is deployed and benchmarked, and its results are compared against the existing ones. Use this skill whenever the user wants to A/B test llm-d configurations, compare llm-d config to baseline with no llm-d Inference Scheduler, compare models or serving strategies, evaluate the effect of a configuration change, run two benchmarks back-to-back for comparison, or compare a new run against a previous one — even if they say "which is faster", "test two setups", "compare these configs", "compare against my last run", or don't use "A/B" or "benchmark" terminology explicitly.
 ---
 
 # Compare llm-d Configurations
@@ -106,12 +106,13 @@ Work through the following steps for the first configuration.
 Tell the user: *"Starting Run A: $RUN_A_LABEL — deploying the stack."*
 
 Follow the **deploy-llm-d** skill workflow. The namespace is already set from Phase 0.
+**If Run A is a baseline, "no llm-d scheduler", configuration**, follow the **Baseline Configuration Setup** procedure in the provided resources folder after deployment completes.
 
 ### 1.2 Run Benchmark
 
 Tell the user: *"Stack is up — running benchmark for Run A."*
 
-Follow the **run-llm-d-benchmark** skill workflow. When the skill asks where to save results, use:
+Follow the **run-llm-d-benchmark** skill workflow, if Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. When the skill asks where to save results, use:
 
 ```
 $COMPARISON_DIR/run-a/results
@@ -201,12 +202,13 @@ Repeat the same sequence for the second configuration.
 Tell the user: *"Starting Run B: $RUN_B_LABEL — deploying the stack."*
 
 Follow the **llm-d-kubernetes-deployment** skill workflow in the same namespace.
+**If Run B is a baseline, "no llm-d scheduler", configuration** (shouldn't use llm-d scheduling), follow the **Baseline Configuration Setup** procedure in the provided resources folder after deployment completes.
 
 ### 2.2 Run Benchmark
 
 Tell the user: *"Stack is up — running benchmark for Run B."*
 
-Follow the **run-llm-d-benchmark** skill workflow. Results path:
+Follow the **run-llm-d-benchmark** skill workflow, if Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. Results path:
 
 ```
 $COMPARISON_DIR/run-b/results
@@ -427,3 +429,5 @@ Critical rules to follow when comparing =llm-d configurations:
 
 2. **Do NOT modify any existing code you did not create** — Only create new files and modify them as needed. Never edit pre-existing files in the repository (e.g., existing `values.yaml`, `helmfile.yaml`, `httproute.yaml`, `README.md`, or any other committed file). If customization is required, create a new file (e.g., `values-custom.yaml`, `httproute-custom.yaml`) and reference it instead.
 
+
+---
