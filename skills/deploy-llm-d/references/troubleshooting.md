@@ -26,6 +26,18 @@
 
 ## Runtime Issues
 
+**Excessive pod creation:**
+- **Symptom:** Deployment creates far more pods than requested replicas, often due to insufficient GPU resources
+- **Root cause:** When pods fail to obtain required GPUs, Kubernetes keeps creating new pods while old ones remain in Pending/CrashLoopBackOff state. Multiple ReplicaSets from failed deployments can accumulate.
+- **Fix:**
+  1. Check current pod status: `kubectl get pods -n <namespace> -l llm-d.ai/model=<model-name>`
+  2. Identify old ReplicaSets: `kubectl get replicasets -n <namespace> -l llm-d.ai/model=<model-name>`
+  3. Delete old ReplicaSets: `kubectl delete replicaset <old-replicaset-name> -n <namespace>`
+  4. Delete non-working pods: `kubectl delete pod <pod-name> -n <namespace>`
+  5. Verify GPU availability matches requirements: `kubectl describe nodes | grep nvidia.com/gpu`
+  6. Scale deployment if needed: Update `replicas` in modelservice-values.yaml and reapply with helmfile
+- **Prevention:** Always verify cluster has sufficient GPU resources before deployment
+
 **Pods pending:**
 - Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
 
