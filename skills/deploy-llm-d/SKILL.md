@@ -1,6 +1,6 @@
 ---
 name: deploy-llm-d
-description: Configure and deploy an llm-d stack (high-performance distributed LLM inference) on an existing Kubernetes and OpenShift cluster using Well-lit Path guides. Use this skill when users want to deploy llm-d on Kubernetes or OpenShift.
+description: Configure and deploy an llm-d stack on an existing Kubernetes and OpenShift cluster using Well-Lit Path guides. Use this skill when users want to deploy, verify, or customize llm-d.
 ---
 
 # Deploy llm-d Stack
@@ -27,12 +27,12 @@ All changes must be made exclusively inside the designated project namespace. Ne
 
 ## Overview
 
-llm-d provides Well-lit Path deployment guides located in the `guides/` directory. Each guide has a README.md file with the prefix "Well-lit Path:" in its title, containing tested and benchmarked recipes for specific deployment strategies.
+llm-d provides Well-Lit Path deployment guides in the `guides/` directory of `${LLMD_PATH}`. The guide index at `${LLMD_PATH}/guides/README.md` is the main reference for available deployment paths and supporting guides.
 
-**To discover available Well-lit Paths**, the agent will:
-1. List directories under `guides/` (excluding `prereq/` and `recipes/`)
-2. Check each directory for a README.md file
-3. Read the README.md title to identify Well-lit Path guides (those starting with "Well-lit Path:")
+**To discover available Well-Lit Paths**, the agent will:
+1. Read `${LLMD_PATH}/guides/README.md`
+2. Extract the currently listed guides and descriptions
+3. Read the selected guide's README for guide-specific requirements
 4. Present the available guides to the user with their descriptions
 
 ## When to Use This Skill
@@ -46,16 +46,16 @@ Activate this skill when users need to:
 
 ## Prerequisites
 
-Each Well-lit Path guide contains its own prerequisites section. Common prerequisites include:
+Each Well-Lit Path guide contains its own prerequisites section. Common prerequisites include:
 
-1. **LLMD_PATH Environment Variable** - Point to your llm-d repository clone
-2. **Client Tools** - kubectl, helm, helmfile, git (see `guides/prereq/client-setup/README.md`)
-3. **HuggingFace Token** - Secret `llm-d-hf-token` with key `HF_TOKEN` in target namespace
-4. **Gateway Provider** - Istio, K-Gateway, or Agent Gateway (see `guides/prereq/gateway-provider/README.md`)
-5. **Infrastructure** - Sufficient cluster resources (see `guides/prereq/infrastructure/README.md`)
-6. **Monitoring** (optional) - Prometheus and Grafana (see `docs/monitoring/README.md`)
+1. **LLMD_PATH environment variable** - Point to the local llm-d repository clone
+2. **Client Tools** - `kubectl` or `oc`, `helm`, `kustomize`, `git`
+3. **HuggingFace Token** - Secret `llm-d-hf-token` with key `HF_TOKEN` in target namespace when the selected model requires it
+4. **Gateway Provider** - only when the user selects Gateway API proxy mode; see `${LLMD_PATH}/guides/prereq/gateway-provider/README.md`
+5. **Infrastructure** - sufficient cluster resources for the selected guide
+6. **Benchmark tooling** (optional) - use the local `llm-d-benchmark` repository README and CLI docs for benchmarking workflows
 
-**Refer to the specific guide's README.md for detailed prerequisites.**
+**Refer to the specific guide's README for detailed prerequisites.**
 
 ## Deployment Workflow
 
@@ -63,27 +63,26 @@ When a user requests llm-d deployment, follow this workflow:
 
 ### Step 0: Verify LLMD_PATH or Get Repository Location
 
-Use LLMD_PATH environment variable if set; if not set, ask the user for the llm-d repository path.
 **Check for llm-d repository:**
-- Use `LLMD_PATH` environment variable if set;
-- If not set check if current directory is llm-d repository 
+- Use `LLMD_PATH` if set
+- If not set, detect a nearby local clone; once a valid path is known, set/export `LLMD_PATH` before continuing
 - If not found, offer options:
-  - User provides path to existing clone
-  - Clone from GitHub form https://github.com/llm-d/llm-d,main (default) or specific branch
-  - release
+  - user provides path to an existing clone, then set/export `LLMD_PATH`
+  - clone from GitHub from https://github.com/llm-d/llm-d on `main` or a specific branch, then set/export `LLMD_PATH`
+  - use a release tag if requested, then set/export `LLMD_PATH`
   
 ### Step 1: Discover and Select Well-lit Path Guide
 
 1. Automatically discover available Well-lit Path guides:
 
 2. Extract guide information:
-   - Guide name (from README.md title after "Well-lit Path:")
-   - Guide directory name
-   - Brief description (from Overview section)
+   - guide name from `${LLMD_PATH}/guides/README.md`
+   - guide directory name
+   - brief description from the guide index and selected guide README
 
 3. Present discovered guides to user:
 
-**Default suggestion**: If `inference-scheduling` guide exists, suggest it as default.
+**Default suggestion**: If the user has no strong preference, suggest `optimized-baseline` as the default starting point.
 
 **For deployment modifications** (changing model, features, or configuration):
 - Select the Well-lit Path guide closest to the user's requirements
@@ -163,46 +162,36 @@ Execute these actions in sequence, adapting based on the specific guide's requir
 #### 4.3 Prerequisites Verification
 
 **Verify all prerequisites are met:**
-- Client tools installed (kubectl, helm, helmfile)
-- HuggingFace token secret created (if required by guide)
-- Gateway provider deployed (if required by guide)
+- Client tools installed (`kubectl` or `oc`, `helm`, `kustomize`)
+- HuggingFace token secret created if required by the selected model
+- Gateway provider deployed if the user selected Gateway API proxy mode
 - Infrastructure requirements met (nodes, accelerators)
-- PVC is Bound (if required by guide)
+- PVC is Bound if required by the guide
 
-**Check each prerequisite programmatically:**
+**Check each prerequisite programmatically where possible:**
 ```bash
 # Example: Check for HuggingFace secret
-kubectl get secret hf-token -n ${NAMESPACE} 2>/dev/null || echo "Warning: HuggingFace token secret not found"
+kubectl get secret llm-d-hf-token -n ${NAMESPACE} 2>/dev/null || echo "Warning: HuggingFace token secret not found"
 
-# Example: Check for Gateway API CRDs
+# Example: Check for Gateway API CRDs when gateway mode is selected
 kubectl get crd gateways.gateway.networking.k8s.io 2>/dev/null || echo "Warning: Gateway API CRDs not installed"
 ```
 
-#### 4.4 Helmfile Deployment
+#### 4.4 Install the Scheduler
 
-**Deploy using helmfile with auto-detected configuration:**
+Follow the current install flow in `${LLMD_PATH}/guides/01_installing_a_guide.md`:
+
+- **Standalone mode** is the default and simplest path
+- **Gateway API proxy mode** is used when the user needs a full gateway provider
+
+Install the scheduler using the guide's layered Helm values and the appropriate chart for the chosen mode.
+
+#### 4.5 Deploy the Model Server
+
+Deploy the model server using the guide's `kustomize` overlay:
+
 ```bash
-helmfile apply -n ${NAMESPACE}
-```
-
-**Only add environment flags if overriding defaults:**
-- Hardware override: `-e <hardware>` (e.g., `-e cuda`, `-e tpu`)
-- Gateway override: `-e <gateway>` (e.g., `-e istio`, `-e kgateway`)
-
-**Example with overrides:**
-```bash
-helmfile apply -n ${NAMESPACE} -e cuda -e istio
-```
-
-#### 4.5 HTTPRoute Configuration
-
-**If guide includes HTTPRoute, apply it:**
-```bash
-# Standard HTTPRoute
-kubectl apply -f httproute.yaml -n ${NAMESPACE}
-
-# Or GKE-specific HTTPRoute
-kubectl apply -f httproute.gke.yaml -n ${NAMESPACE}
+kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl apply -n ${NAMESPACE} -f -
 ```
 
 #### 4.6 Deployment Validation
@@ -222,9 +211,10 @@ kubectl apply -f httproute.gke.yaml -n ${NAMESPACE}
    - Check PVCs (if applicable)
 
 3. **Connectivity test:**
-   - Get gateway address: `kubectl get gateway -n {namespace}`
-   - Test endpoint: `curl http://{gateway-address}/v1/models`
-   - Send test request: `curl http://{gateway-address}/v1/chat/completions -d {...}`
+   - Expose the endpoint using the current verification guide: port-forward, external IP, ingress, or route as described in `${LLMD_PATH}/guides/02_verifying_a_guide.md`
+   - Test endpoint: `curl ${ENDPOINT}/v1/models`
+   - Send test request: `curl ${ENDPOINT}/v1/completions -d {...}`
+   - Query `/v1/models` first and use the actual returned model name in completion requests
    Model loading can take several minutes depending on model size
 
 
@@ -234,11 +224,11 @@ kubectl apply -f httproute.gke.yaml -n ${NAMESPACE}
    - Verify response times meet requirements
 
 **Success Criteria:**
-- All pods in Running state with N/N ready
-- InferencePool shows Ready status
-- Gateway shows Programmed status
-- HTTPRoute shows Accepted status
-- Inference endpoint responds to requests
+- All required pods are Running state with N/N ready
+- Scheduler resources are ready
+- Gateway resources are healthy when gateway mode is used
+- `/v1/models` responds successfully
+- `/v1/completions` responds successfully
 ### 4.7 Generate Deployment Script
 
 **CRITICAL: You MUST ALWAYS generate a deployment script after successful validation.**
@@ -341,11 +331,11 @@ For detailed troubleshooting guidance, see [troubleshooting.md](./references/tro
 
 ### Additional Resources
 
-- **Quickstart**: `guides/QUICKSTART.md`
-- **Architecture**: `https://llm-d.ai/docs/architecture`
-- **Gateway Customization**: `docs/customizing-your-gateway.md`
-- **Inference Gateway**: https://github.com/kubernetes-sigs/gateway-api-inference-extension
-- **Inference Scheduler Architecture**: https://github.com/llm-d/llm-d-inference-scheduler/blob/main/docs/architecture.md
+- **Guide Index**: `${LLMD_PATH}/guides/README.md`
+- **Installing a Guide**: `${LLMD_PATH}/guides/01_installing_a_guide.md`
+- **Verifying a Guide**: `${LLMD_PATH}/guides/02_verifying_a_guide.md`
+- **Benchmarking a Guide**: `${LLMD_PATH}/guides/03_benchmarking_a_guide.md`
+- **llm-d-benchmark CLI**: use the local `llm-d-benchmark` repository README when benchmark automation is needed
 
 ## Security Considerations
 
