@@ -211,6 +211,16 @@ kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl app
    - Check PVCs (if applicable)
 
 3. **Connectivity test:**
+   
+   <ask_followup_question>
+   <question>Would you like to run the connectivity test? (default: No)</question>
+   <follow_up>
+   <suggest>No</suggest>
+   <suggest>Yes</suggest>
+   </follow_up>
+   </ask_followup_question>
+   
+   If yes:
    - Expose the endpoint using the current verification guide: port-forward, external IP, ingress, or route as described in `${LLMD_PATH}/guides/02_verifying_a_guide.md`
    - Test endpoint: `curl ${ENDPOINT}/v1/models`
    - Send test request: `curl ${ENDPOINT}/v1/completions -d {...}`
