@@ -37,7 +37,7 @@ description: Configure and optimize Workload Variant Autoscaler (WVA) for llm-d 
 4. Set environment variables: `LLMD_REPO_PATH`, `WVA_REPO_PATH`
 
 ## Overview
-This skill helps you configure Workload Variant Autoscaler (WVA) for llm-d inference deployments based on your specific requirements. WVA provides intelligent autoscaling using KV cache saturation and queue depth metrics, with support for multi-variant cost optimization.
+This skill helps you configure Workload Variant Autoscaler (WVA) for llm-d inference deployments based on your specific requirements. WVA provides intelligent autoscaling using KV cache saturation and queue depth metrics (number of requests waiting to be processed), with support for multi-variant cost optimization.
 
 ## When to Use This Skill
 
@@ -165,7 +165,11 @@ Ask clarifying questions to understand:
 
 Configure three components:
 - **VariantAutoscaling**: Core WVA resource ([template](scripts/configs/variantautoscaling-basic.yaml))
-- **Saturation Thresholds**: kvCacheThreshold (0.80), queueLengthThreshold (5), kvSpareTrigger (0.10), queueSpareTrigger (3)
+- **Saturation Thresholds**:
+  - `kvCacheThreshold` (0.80): Scale when KV cache is 80% full
+  - `queueLengthThreshold` (5): Scale when 5+ requests are queued
+  - `kvSpareTrigger` (0.10): Proactive scaling - add capacity when within 10% of KV threshold
+  - `queueSpareTrigger` (3): Proactive scaling - add capacity when within 3 requests of queue threshold
 - **HPA**: Kubernetes HPA for actual scaling ([template](scripts/configs/hpa-basic.yaml))
 
 ### 3. Common Configuration Patterns
