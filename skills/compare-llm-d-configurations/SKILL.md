@@ -112,7 +112,7 @@ Follow the **deploy-llm-d** skill workflow. The namespace is already set from Ph
 
 Tell the user: *"Stack is up — running benchmark for Run A."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. When the skill asks where to save results, use:
+Follow the **run-llm-d-benchmark** skill workflow, if Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. When the skill asks where to save results, use:
 
 ```
 $COMPARISON_DIR/run-a/results
@@ -208,7 +208,7 @@ Follow the **llm-d-kubernetes-deployment** skill workflow in the same namespace.
 
 Tell the user: *"Stack is up — running benchmark for Run B."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoing in the run configuration. Results path:
+Follow the **run-llm-d-benchmark** skill workflow, if Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. Results path:
 
 ```
 $COMPARISON_DIR/run-b/results
