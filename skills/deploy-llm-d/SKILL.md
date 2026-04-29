@@ -312,6 +312,45 @@ echo "Deployment complete!"
 - Check taints and tolerations: `$CLI_CMD describe nodes | grep -A 5 Taints`
 - Verify hardware requirements match available nodes
 
+##### Excessive Pod Creation / GPU Hardware Failures
+
+**Issue**: Deployment creates hundreds of pods, all failing with GPU errors like "GPU is lost" or NVLink failures
+
+**Solution**:
+1. **Stop the pod creation loop immediately:**
+   ```bash
+   kubectl delete deployment <deployment-name> -n ${NAMESPACE}
+   kubectl delete pods -n ${NAMESPACE} -l llm-d.ai/model=<model-name> --grace-period=0 --force
+   ```
+
+2. **Identify problematic nodes:**
+   ```bash
+   kubectl describe pod <failing-pod> -n ${NAMESPACE} | grep -A 10 "Events:"
+   ```
+   Look for node names in "Successfully assigned" messages and GPU errors
+
+3. **Add node anti-affinity to avoid bad nodes:**
+   Add this to your deployment patch YAML:
+   ```yaml
+   spec:
+     template:
+       spec:
+         affinity:
+           nodeAffinity:
+             requiredDuringSchedulingIgnoredDuringExecution:
+               nodeSelectorTerms:
+               - matchExpressions:
+                 - key: kubernetes.io/hostname
+                   operator: NotIn
+                   values:
+                   - <problematic-node-name>
+   ```
+
+4. **Redeploy with the updated configuration**
+
+See [troubleshooting.md](./references/troubleshooting.md) for detailed steps and additional solutions.
+
+
 ##### Gateway Routing Not Working
 
 **Issue**: HTTPRoute not routing traffic to services

@@ -144,6 +144,56 @@
 - **Solution**: Verify pod security policies/standards
 - **Solution**: Check for resource quota violations
 
+**Excessive pod creation / GPU hardware failures:**
+- **Problem**: Deployment creates hundreds of pods (e.g., 450+) instead of requested replicas, with pods failing due to GPU hardware errors
+- **Symptoms**:
+  - Massive pod creation (100s of pods when only 1-3 replicas requested)
+  - Pods stuck in `ContainerStatusUnknown`, `Pending`, or `UnexpectedAdmissionError`
+  - GPU NVLink errors in pod events: `error getting NVLink for devices: failed to get nvlink state: GPU is lost`
+  - Continuous pod creation/failure loop exhausting cluster resources
+- **Root Cause**: GPU hardware failure on specific cluster nodes (e.g., NVLink failures, GPU device errors)
+- **Immediate Fix** (stop the pod creation loop):
+  ```bash
+  # 1. Delete the deployment to stop creating new pods
+  kubectl delete deployment <deployment-name> -n ${NAMESPACE}
+  
+  # 2. Force delete all failing pods
+  kubectl delete pods -n ${NAMESPACE} -l llm-d.ai/model=<model-name> --grace-period=0 --force
+  
+  # 3. Scale deployment to minimal replicas before redeploying
+  # Edit your deployment configuration to set replicas: 1
+  ```
+- **Diagnosis**:
+  ```bash
+  # Check pod events for GPU errors
+  kubectl describe pod <pod-name> -n ${NAMESPACE} | grep -A 10 Events
+  
+  # Identify problematic nodes
+  kubectl get pods -n ${NAMESPACE} -o wide | grep <failing-pod-prefix>
+  
+  # Check node GPU status
+  kubectl describe node <node-name> | grep -A 10 "nvidia.com/gpu"
+  ```
+- **Long-term Solution** (avoid problematic nodes):
+  Add node anti-affinity to your deployment configuration to avoid scheduling on nodes with GPU hardware issues:
+  ```yaml
+  # Add to your patch file or deployment spec under spec.template.spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/hostname
+            operator: NotIn
+            values:
+            - <problematic-node-name>  # e.g., pokprod-b93r38s3
+  ```
+- **Prevention**:
+  - Monitor pod events during initial deployment
+  - Report GPU hardware failures to cluster administrators
+  - Maintain a list of known problematic nodes in your deployment documentation
+- **Note**: This requires cluster administrator intervention to repair or replace faulty GPU hardware
+
 **Pods crash:**
 - Check logs: `kubectl logs <pod> -c vllm -n ${NAMESPACE}`
 - Check previous logs: `kubectl logs <pod> -c vllm -n ${NAMESPACE} --previous`
