@@ -132,14 +132,6 @@ echo $LLMD_PATH
 
 # For optimized-baseline guide with GPU/vLLM (example)
 kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/gpu/vllm/ -n $NAMESPACE
-
-# For other accelerators, adjust the path accordingly:
-# kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/amd/vllm/ -n $NAMESPACE
-# kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/cpu/vllm/ -n $NAMESPACE
-# kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/xpu/vllm/ -n $NAMESPACE
-# kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/hpu/vllm/ -n $NAMESPACE
-# kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/tpu-v6/vllm/ -n $NAMESPACE
-# kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/tpu-v7/vllm/ -n $NAMESPACE
 ```
 
 #### Approach 2: Using Label Selectors (Fallback)
