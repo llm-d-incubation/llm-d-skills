@@ -237,34 +237,6 @@ Report what remains and whether it is expected (e.g., unrelated workloads the us
 - Cleaning up after Kustomize-based deployments (kubectl apply -k)
 - Cleaning up hybrid deployments (both Helm and Kustomize)
 
-## Common Deployment Patterns
-Understanding how different guides deploy resources helps determine the correct teardown approach:
-### Optimized Baseline Guide
-- **Scheduler**: Deployed via Helm (`helm install` in standalone or gateway mode)
-- **Model Server**: Deployed via Kustomize (`kubectl apply -k guides/optimized-baseline/modelserver/<accelerator>/<server>/`)
-- **HTTPRoute**: Applied separately (`kubectl apply -f`)
-
-**Teardown sequence:**
-1. Delete model server: `kubectl delete -k guides/optimized-baseline/modelserver/<accelerator>/<server>/ -n $NAMESPACE`
-2. Uninstall scheduler: `helm uninstall <release-name> -n $NAMESPACE`
-3. Optionally delete HTTPRoute: `kubectl delete httproute --all -n $NAMESPACE`
-
-### PD Disaggregation Guide
-- **All components**: Deployed via helmfile (`helmfile apply`)
-- **HTTPRoute**: Applied separately (`kubectl apply -f`)
-
-**Teardown sequence:**
-1. Uninstall all releases: `helm uninstall infra-pd gaie-pd ms-pd -n $NAMESPACE`
-2. Optionally delete HTTPRoute: `kubectl delete -f httproute.yaml -n $NAMESPACE`
-
-### Workload Autoscaling Guide
-- **All components**: Deployed via helmfile (`helmfile apply`)
-- **HTTPRoute**: Applied separately (`kubectl apply -f`)
-
-**Teardown sequence:**
-1. Uninstall all releases: `helm uninstall infra-<postfix> gaie-<postfix> ms-<postfix> workload-variant-autoscaler -n $NAMESPACE`
-2. Optionally delete HTTPRoute and autoscaling resources
-
 ## Security Considerations
 
 - Run teardown operations in isolated namespaces
