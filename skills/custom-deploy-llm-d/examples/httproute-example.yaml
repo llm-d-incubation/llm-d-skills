@@ -1,0 +1,36 @@
+# HTTPRoute Example for Gateway API Proxy Mode
+#
+# This HTTPRoute connects your Gateway to the InferencePool (scheduler) for routing inference requests.
+# Only needed when using Gateway API proxy mode (not standalone mode).
+#
+# Key customization points:
+# - metadata.name: Your HTTPRoute name
+# - parentRefs[].name: Gateway name from your gateway deployment
+# - backendRefs[].name: InferencePool name from inferencepool chart installation
+#
+# For more details see: ${LLMD_PATH}/guides/recipes/gateway/README.md
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-d-inference  # Your HTTPRoute name (e.g., llm-d-{model})
+  namespace: your-namespace  # Your deployment namespace
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: inference-gateway  # Gateway name from your gateway deployment
+      namespace: your-namespace  # Gateway namespace (typically same as HTTPRoute)
+  rules:
+    - backendRefs:
+        - group: inference.networking.k8s.io  # Use inference.networking.k8s.io for InferencePool backends
+          kind: InferencePool
+          name: optimized-baseline-scheduler  # InferencePool name from inferencepool chart (e.g., {guide}-scheduler)
+          port: 9002  # Scheduler service port (default: 9002)
+      timeouts:
+        backendRequest: 0s  # 0s = no timeout for long-running inference
+        request: 0s  # 0s = no timeout for client requests
+      matches:
+        - path:
+            type: PathPrefix
+            value: /  # Route all paths (/, /v1/*, etc.)

@@ -1,0 +1,34 @@
+# DestinationRule Example for Istio Gateway Provider
+#
+# This DestinationRule optimizes connection handling to the scheduler service for high-throughput scenarios.
+# Only needed when using Istio as the gateway provider.
+# Typically created automatically by gateway recipes, but can be customized for specific requirements.
+#
+# Key customization points:
+# - metadata.name: Match your scheduler service name
+# - spec.host: Full service FQDN of the scheduler
+# - connectionPool settings: Adjust for expected concurrent requests and throughput
+#
+# For more details see: ${LLMD_PATH}/guides/recipes/gateway/README.md
+
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: optimized-baseline-scheduler  # Match your scheduler service name
+  namespace: your-namespace  # Same namespace as scheduler service
+spec:
+  host: optimized-baseline-scheduler.your-namespace.svc.cluster.local  # Full service FQDN ({guide}-scheduler.{namespace}.svc.cluster.local)
+  trafficPolicy:
+    connectionPool:
+      http:
+        http1MaxPendingRequests: 256000  # Max pending HTTP/1.1 requests
+        http2MaxRequests: 256000  # Max concurrent HTTP/2 requests (adjust for expected concurrency)
+        idleTimeout: 900s  # Connection idle timeout (15 min)
+        maxRequestsPerConnection: 256000  # Max requests per connection
+      tcp:
+        connectTimeout: 900s  # TCP connection timeout (15 min)
+        maxConnectionDuration: 1800s  # Max connection lifetime (30 min, adjust for inference duration)
+        maxConnections: 256000  # Max TCP connections (adjust for throughput requirements)
+    tls:
+      insecureSkipVerify: true  # Skip TLS verification for internal traffic
+      mode: SIMPLE  # Use simple TLS mode
