@@ -1,13 +1,13 @@
 ---
 name: teardown-llm-d-stack
-description: Tears down, removes, cleans up, or undeploys a deployed llm-d stack on Kubernetes. Use this skill whenever the user wants to remove or destroy an llm-d deployment, clean up a namespace after inference workloads, uninstall helm releases for llm-d, or free up cluster resources used by llm-d — even if they don't say "teardown" explicitly. Also handles partial cleanup (e.g., remove only the model service, keep the gateway).
+description: Tears down, removes, cleans up, or undeploys a deployed llm-d stack on Kubernetes. Use this skill whenever the user wants to remove or destroy an llm-d deployment, clean up a namespace after inference workloads, uninstall helm releases for llm-d, or free up cluster resources used by llm-d — even if they don't say "teardown" explicitly. Also handles partial cleanup (e.g., remove only the model service, keep the gateway). Supports both Helm-based and Kustomize-based deployments.
 ---
 
 # Teardown llm-d Stack
 
 ## Purpose
 
-Cleanly remove a deployed llm-d stack from a Kubernetes namespace. Works regardless of which Well-lit Path guide was used to deploy the stack — no local repo is needed. Always confirms with the user before deleting anything.
+Cleanly remove a deployed llm-d stack from a Kubernetes namespace. Works with both Helm-based deployments (using `helmfile` or `helm`) and Kustomize-based deployments (using `kubectl apply -k`). No local repo is needed for Helm-only teardown, but Kustomize-based resources require access to the kustomization directory. Always confirms with the user before deleting anything.
 
 ---
 
@@ -43,9 +43,23 @@ helm list -n $NAMESPACE
 # HTTPRoutes and Gateways
 kubectl get httproute,gateway -n $NAMESPACE 2>/dev/null
 
-# All remaining pods
+# All deployments (including those created by Kustomize)
+kubectl get deployments -n $NAMESPACE
+
+# All services
+kubectl get services -n $NAMESPACE
+
+# All pods
 kubectl get pods -n $NAMESPACE
+
+# Check for llm-d labels to identify Kustomize-deployed resources
+kubectl get deployments,services,serviceaccounts,podmonitors -n $NAMESPACE -l llm-d.ai/guide 2>/dev/null
 ```
+
+**Identify deployment method:**
+- If Helm releases exist: Helm-based deployment
+- If resources with `llm-d.ai/guide` labels exist but no Helm releases: Kustomize-based deployment
+- If both exist: Hybrid deployment (common pattern)
 
 ---
 
@@ -56,22 +70,33 @@ Before touching anything, show the user exactly what will be removed and ask for
 ```
 Teardown plan for namespace: <NAMESPACE>
 
+Deployment Method: <Helm-based | Kustomize-based | Hybrid>
+
 Helm releases to uninstall:
   - <release-1>
   - <release-2>
   - <release-3>
 
+Kustomize-deployed resources (if applicable):
+  - Deployments: <list>
+  - Services: <list>
+  - ServiceAccounts: <list>
+  - PodMonitors: <list>
+
 Not removed unless you choose below:
   HTTPRoutes: <list or "none found">
+  Gateways: <list or "none found">
 
-Shall I proceed to uninstall the helm releases listed above?
+Shall I proceed with the teardown?
 ```
 
 **Do not proceed until the user confirms.**
 
 ---
 
-## Step 4: Uninstall Helm Releases
+## Step 4: Remove Deployed Resources
+
+### Step 4a: Uninstall Helm Releases (if present)
 
 Uninstall all releases identified in Step 2, scoped to the namespace. This approach works regardless of which guide was used to deploy the stack — no helmfile or local repo required.
 
@@ -86,9 +111,56 @@ helm list -n $NAMESPACE
 
 If any releases remain or errors occurred, diagnose and resolve before continuing.
 
+### Step 4b: Remove Kustomize-Deployed Resources (if present)
+
+**Two approaches for removing Kustomize resources:**
+
+#### Approach 1: Using Kustomize Directory (Preferred)
+
+If the user has access to the llm-d repository or deployment directory with kustomization files:
+
+**First, verify or set LLMD_PATH:**
+- Check if `LLMD_PATH` environment variable is set
+- If not set, ask the user for the path to their llm-d repository
+- Once obtained, set it: `export LLMD_PATH=/path/to/llm-d`
+
+```bash
+# Verify LLMD_PATH is set
+echo $LLMD_PATH
+# If empty, ask user for the llm-d repository path and set it:
+# export LLMD_PATH=/path/to/llm-d
+
+# For optimized-baseline guide with GPU/vLLM (example)
+kubectl delete -k ${LLMD_PATH}/guides/optimized-baseline/modelserver/gpu/vllm/ -n $NAMESPACE
+```
+
+#### Approach 2: Using Label Selectors (Fallback)
+
+If kustomization files are not available, delete resources by their llm-d labels:
+
+```bash
+# Delete all resources with llm-d.ai/guide label
+kubectl delete deployments,services,serviceaccounts,podmonitors \
+  -n $NAMESPACE \
+  -l llm-d.ai/guide
+
+# Verify specific guide resources if known (e.g., optimized-baseline)
+kubectl delete deployments,services,serviceaccounts,podmonitors \
+  -n $NAMESPACE \
+  -l llm-d.ai/guide=optimized-baseline
+```
+
+**Verify resources are removed:**
+```bash
+kubectl get deployments,services,serviceaccounts,podmonitors -n $NAMESPACE -l llm-d.ai/guide
+kubectl get pods -n $NAMESPACE
+```
+
+If resources remain, check for finalizers or other blocking conditions.
+
 ---
 
-## Step 5: Optionally Remove HTTPRoutes
+## Step 5: Optionally Remove HTTPRoutes and Gateways
 
 Ask the user:
 
@@ -111,9 +183,20 @@ If no HTTPRoutes or Gateways exist, skip this step.
 Confirm the resources have been removed:
 
 ```bash
+# Check Helm releases
 helm list -n $NAMESPACE
+
+# Check Kustomize-deployed resources
+kubectl get deployments,services,serviceaccounts,podmonitors -n $NAMESPACE -l llm-d.ai/guide
+
+# Check all pods
 kubectl get pods -n $NAMESPACE
+
+# Check HTTPRoutes and Gateways
 kubectl get httproute,gateway -n $NAMESPACE 2>/dev/null
+
+# Check for any remaining llm-d resources
+kubectl get all -n $NAMESPACE -l llm-d.ai/guide
 ```
 
 Report what remains and whether it is expected (e.g., unrelated workloads the user intentionally kept).
@@ -124,8 +207,11 @@ Report what remains and whether it is expected (e.g., unrelated workloads the us
 
 1. **Confirm before any deletion** — never silently delete resources.
 2. **Scope all operations to `$NAMESPACE`** — no cluster-level changes.
-3. **HTTPRoutes deletion is always opt-in** — ask separately; never assume.
+3. **HTTPRoutes and Gateways deletion is always opt-in** — ask separately; never assume.
 4. **Handle errors** — if a command fails, diagnose and resolve before continuing.
+5. **Detect deployment method** — identify whether resources were deployed via Helm, Kustomize, or both.
+6. **Prefer kustomization directory** — when available, use `kubectl delete -k` for cleaner removal.
+7. **Use label selectors as fallback** — when kustomization files are unavailable, delete by labels.
 
 ## What Not To Do
 
@@ -139,6 +225,9 @@ Report what remains and whether it is expected (e.g., unrelated workloads the us
 - Freeing up GPU/CPU resources in a namespace
 - Resetting a namespace before a fresh deployment
 - Partial cleanup (e.g., remove model service only, keep the gateway)
+- Cleaning up after Helm-based deployments (helmfile or helm install)
+- Cleaning up after Kustomize-based deployments (kubectl apply -k)
+- Cleaning up hybrid deployments (both Helm and Kustomize)
 
 ## Security Considerations
 
