@@ -211,6 +211,18 @@ kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl app
    - Check PVCs (if applicable)
 
 3. **Connectivity test:**
+   
+   **Note:** By default, the connectivity test is NOT performed. Only run this test if explicitly requested by the user.
+   
+   <ask_followup_question>
+   <question>Would you like to run the connectivity test?</question>
+   <follow_up>
+   <suggest>No - Skip connectivity test (recommended default)</suggest>
+   <suggest>Yes - Run connectivity test</suggest>
+   </follow_up>
+   </ask_followup_question>
+   
+   If yes:
    - Expose the endpoint using the current verification guide: port-forward, external IP, ingress, or route as described in `${LLMD_PATH}/guides/02_verifying_a_guide.md`
    - Test endpoint: `curl ${ENDPOINT}/v1/models`
    - Send test request: `curl ${ENDPOINT}/v1/completions -d {...}`
@@ -301,6 +313,45 @@ echo "Deployment complete!"
 - Check node selectors: `$CLI_CMD get pod <pod> -n ${NAMESPACE} -o yaml | grep -A 5 nodeSelector`
 - Check taints and tolerations: `$CLI_CMD describe nodes | grep -A 5 Taints`
 - Verify hardware requirements match available nodes
+
+##### Excessive Pod Creation / GPU Hardware Failures
+
+**Issue**: Deployment creates hundreds of pods, all failing with GPU errors like "GPU is lost" or NVLink failures
+
+**Solution**:
+1. **Stop the pod creation loop immediately:**
+   ```bash
+   kubectl delete deployment <deployment-name> -n ${NAMESPACE}
+   kubectl delete pods -n ${NAMESPACE} -l llm-d.ai/model=<model-name> --grace-period=0 --force
+   ```
+
+2. **Identify problematic nodes:**
+   ```bash
+   kubectl describe pod <failing-pod> -n ${NAMESPACE} | grep -A 10 "Events:"
+   ```
+   Look for node names in "Successfully assigned" messages and GPU errors
+
+3. **Add node anti-affinity to avoid bad nodes:**
+   Add this to your deployment patch YAML:
+   ```yaml
+   spec:
+     template:
+       spec:
+         affinity:
+           nodeAffinity:
+             requiredDuringSchedulingIgnoredDuringExecution:
+               nodeSelectorTerms:
+               - matchExpressions:
+                 - key: kubernetes.io/hostname
+                   operator: NotIn
+                   values:
+                   - <problematic-node-name>
+   ```
+
+4. **Redeploy with the updated configuration**
+
+See [troubleshooting.md](./references/troubleshooting.md) for detailed steps and additional solutions.
+
 
 ##### Gateway Routing Not Working
 
