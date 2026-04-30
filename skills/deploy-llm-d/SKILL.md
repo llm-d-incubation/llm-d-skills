@@ -212,11 +212,13 @@ kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl app
 
 3. **Connectivity test:**
    
+   **Note:** By default, the connectivity test is NOT performed. Only run this test if explicitly needed for verification purposes.
+   
    <ask_followup_question>
-   <question>Would you like to run the connectivity test? (default: No)</question>
+   <question>Would you like to run the connectivity test?</question>
    <follow_up>
-   <suggest>No</suggest>
-   <suggest>Yes</suggest>
+   <suggest>No - Skip connectivity test (recommended default)</suggest>
+   <suggest>Yes - Run connectivity test</suggest>
    </follow_up>
    </ask_followup_question>
    
