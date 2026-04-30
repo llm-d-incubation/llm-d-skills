@@ -1,0 +1,49 @@
+# Example 4: Scale-to-Zero for Development
+# User Request: "Development environment, scale to zero when idle"
+
+# Scale-to-zero ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-model-scale-to-zero-config
+  namespace: workload-variant-autoscaler-system
+data:
+  default: |
+    enable_scale_to_zero: true
+    retention_period: "10m"
+
+---
+# HPA with minReplicas: 0
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: dev-hpa
+  namespace: llm-dev
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ms-inference-scheduling-llm-d-modelservice
+  minReplicas: 0  # Requires HPAScaleToZero feature gate
+  maxReplicas: 5
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: wva_desired_replicas
+        selector:
+          matchLabels:
+            variant_name: ms-inference-scheduling-llm-d-modelservice
+      target:
+        type: AverageValue
+        averageValue: "1"
+
+# Note: Enable in WVA Helm values with:
+# wva:
+#   scaleToZero: true
+
+# Made with Bob

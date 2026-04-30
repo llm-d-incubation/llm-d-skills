@@ -1,0 +1,31 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: <deployment-name>-hpa
+  namespace: <namespace>
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: <deployment-name>
+  minReplicas: 1  # Minimum number of replicas (set to 0 for scale-to-zero with HPAScaleToZero feature gate)
+  maxReplicas: 10
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120  # Prevent flapping
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: wva_desired_replicas
+        selector:
+          matchLabels:
+            # REQUIRED: Both labels must match for HPA to read metrics correctly
+            variant_name: <variant-autoscaling-name>
+            exported_namespace: <namespace>
+      target:
+        type: AverageValue
+        averageValue: "1"
+
+# Made with Bob

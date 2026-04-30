@@ -1,0 +1,55 @@
+# Example 3: Aggressive Scaling for Low Latency
+# User Request: "I need sub-second latency, scale aggressively"
+
+# VariantAutoscaling (standard)
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: low-latency-autoscaler
+  namespace: llm-inference
+  labels:
+    # REQUIRED: Accelerator label for WVA to process this resource
+    inference.optimization/acceleratorName: nvidia
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ms-inference-scheduling-llm-d-modelservice
+  modelID: "Qwen/Qwen3-32B"
+  variantCost: "10.0"
+
+---
+# HPA with aggressive behavior
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: low-latency-hpa
+  namespace: llm-inference
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ms-inference-scheduling-llm-d-modelservice
+  maxReplicas: 20
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60  # Fast scale-up
+      policies:
+      - type: Pods
+        value: 4  # Add 4 pods at a time
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Slow scale-down
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: wva_desired_replicas
+        selector:
+          matchLabels:
+            # REQUIRED: Both labels must match for HPA to read metrics correctly
+            variant_name: low-latency-autoscaler
+            exported_namespace: llm-inference
+      target:
+        type: AverageValue
+        averageValue: "1"
+
+# Made with Bob

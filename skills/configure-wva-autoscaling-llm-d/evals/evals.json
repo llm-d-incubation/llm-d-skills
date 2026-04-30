@@ -1,0 +1,85 @@
+{
+  "skill_name": "configure-wva-autoscaling-llm-d",
+  "evals": [
+    {
+      "id": 1,
+      "name": "basic-wva-setup",
+      "prompt": "I need to set up autoscaling for my Qwen/Qwen3-32B model running on H100 GPUs in the llm-inference namespace. Can you help me configure WVA?",
+      "expected_output": "Should ask clarifying questions about scaling goals (aggressive/balanced/conservative), then provide VariantAutoscaling YAML with scaleTargetRef, modelID, and variantCost. Should also provide HPA configuration with appropriate stabilization windows and external metrics. Should explain monitoring commands to verify setup.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "name": "multi-variant-cost-optimization",
+      "prompt": "I have Llama-70B deployed on both H100 and A100 GPUs. I want WVA to optimize for cost by preferring the cheaper A100s. How do I configure this?",
+      "expected_output": "Should provide two VariantAutoscaling resources with different variantCost values (H100: higher cost like 80.0, A100: lower cost like 40.0). Should explain that WVA will preferentially scale A100 first. Should include HPA configurations for both variants. Should explain how to monitor which variant is being scaled.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 3,
+      "name": "aggressive-scaling-low-latency",
+      "prompt": "I need sub-second latency for my inference service. Configure WVA for aggressive scaling that adds capacity quickly before saturation occurs.",
+      "expected_output": "Should provide configuration with lower saturation thresholds (kvCacheThreshold: 0.70), higher spare triggers (kvSpareTrigger: 0.15), and faster HPA stabilization (60s scale-up). Should include saturation ConfigMap with aggressive thresholds. Should explain the tradeoff between latency and cost.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 4,
+      "name": "conservative-scaling-stability",
+      "prompt": "My workload is stable and I want to avoid frequent scaling. Configure WVA for conservative scaling that prioritizes stability over quick response.",
+      "expected_output": "Should provide configuration with higher saturation thresholds (kvCacheThreshold: 0.85), lower spare triggers (kvSpareTrigger: 0.05), and longer HPA stabilization windows (300s scale-up, 600s scale-down). Should explain that this reduces flapping but may allow brief saturation periods.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 5,
+      "name": "scale-to-zero-development",
+      "prompt": "This is a development environment. I want replicas to scale to zero when idle to save costs. How do I configure scale-to-zero?",
+      "expected_output": "Should provide WVA Helm values with scaleToZero: true, scale-to-zero ConfigMap with retention period, and HPA with minReplicas: 0. Should warn that this requires HPAScaleToZero feature gate and is not recommended for production due to cold start latency. Should explain retention period configuration.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 6,
+      "name": "troubleshooting-not-scaling",
+      "prompt": "My WVA setup isn't working. The VariantAutoscaling shows METRICSREADY: False and replicas aren't scaling. What should I check?",
+      "expected_output": "Should provide diagnostic commands to check: 1) Prometheus scraping (wait 1-2 minutes), 2) Pod metrics exposure, 3) PodMonitor configuration, 4) Send test traffic to generate metrics. Should explain that METRICSREADY: False usually means no metrics available yet or no traffic to model.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 7,
+      "name": "threshold-alignment-epp",
+      "prompt": "I've configured WVA but I'm seeing inconsistent behavior. Sometimes replicas scale up even though EPP is still routing to existing pods. What's wrong?",
+      "expected_output": "Should explain the critical importance of threshold alignment between WVA and Inference Scheduler (EPP). Should provide commands to check EPP configuration and show how to update both WVA saturation ConfigMap and EPP environment variables together. Should explain the consequences of misalignment.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 8,
+      "name": "repository-setup",
+      "prompt": "I want to use this skill but I don't have the llm-d repositories. Can you help me set them up?",
+      "expected_output": "Should detect missing repositories and offer to clone them. Should ask for target directory (default: ~/dev). Should provide commands to clone llm-d, llm-d-workload-variant-autoscaler, and llm-d-benchmark from GitHub. Should set environment variables for repository paths.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 9,
+      "name": "tuning-existing-configuration",
+      "prompt": "I have WVA running but it's scaling too frequently (flapping). Current thresholds are kvCacheThreshold: 0.75, kvSpareTrigger: 0.10. How should I tune this?",
+      "expected_output": "Should analyze the current configuration and suggest: 1) Increase HPA stabilization windows (300s+ for scale-down), 2) Increase kvCacheThreshold to 0.80-0.85, 3) Decrease kvSpareTrigger to 0.05. Should provide updated ConfigMap YAML and explain how to apply changes. Should include monitoring commands to verify improvement.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 10,
+      "name": "testing-with-benchmark",
+      "prompt": "I've configured WVA and want to test it with realistic load. How do I use llm-d-benchmark to validate the autoscaling behavior?",
+      "expected_output": "Should provide commands to: 1) Deploy with WVA using standup.sh --wva, 2) Run workload with run.sh using guidellm harness and chatbot_synthetic profile, 3) Monitor VariantAutoscaling status during test, 4) Collect results from analysis directory. Should reference the testing guide in llm-d-benchmark repository.",
+      "files": [],
+      "assertions": []
+    }
+  ]
+}
