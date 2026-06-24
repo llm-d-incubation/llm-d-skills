@@ -26,7 +26,7 @@ Used to compute KV bytes per token without requiring the user to look up interna
 | mistralai/Mistral-Small-3.1-24B | 40 | 8 | 128 | |
 | google/gemma-2-9b | 42 | 8 | 256 | |
 | google/gemma-2-27b | 46 | 16 | 256 | |
-| openai/gpt-oss-120b | 96 | 8 | 128 | estimate based on 120B scale; verify |
+| openai/gpt-oss-120b | 96 | 8 | 128 | estimate based on 120B scale; verify. **Empirical KV pool: 195,646 tokens/pod on 1× H100 80GiB, TP=1, quantized weights** (theoretical fp4+fp8 estimate of 73,600 was too low — actual weight footprint is smaller than assumed) |
 | ibm-granite/granite-3.3-8b-instruct | 32 | 8 | 128 | |
 | ibm-granite/granite-3.3-2b-instruct | 24 | 8 | 64 | |
 
@@ -62,3 +62,11 @@ For fp4/int4: quarter the fp16 estimate.
 For bfloat16: same as fp16.
 
 In practice vLLM over-allocates slightly for activations and CUDA graphs (~2-5 GiB per GPU). Subtract an additional 5 GiB from available memory to be safe.
+
+## Using empirical KV pool sizes
+
+When a real vLLM deployment is available, prefer the empirical KV pool size over the formula estimate. The actual value can be read from:
+- vLLM startup logs: `"GPU KV cache size: N blocks"` → multiply by block_size
+- Prometheus: `vllm:num_gpu_blocks` gauge × block_size
+
+Empirical values override the formula in Step 3. Record them in the model table above (with hardware config) so future runs on the same hardware skip the estimation entirely. Weight memory estimates are the largest source of error — actual quantized model footprints often differ from the 2B×params rule of thumb.
