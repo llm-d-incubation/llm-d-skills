@@ -199,9 +199,27 @@ Write a clear, self-contained summary with:
 4. **Complete `load:` YAML** — ready to paste into the benchmark config
 5. **Metrics to watch** — tell the user how to confirm offloading is active:
    - `schedule_delay` rising sharply as concurrency increases → KV queue building
-   - Prometheus metric `vllm:gpu_cache_usage_perc` approaching 1.0 → GPU pool saturated
-   - Prometheus metric `vllm:cpu_cache_usage_perc` > 0 → CPU offload actively used
-   - `summary_session_lifecycle_metrics.json → total_input_tokens.median` growing across runs → longer sessions completing as offload removes pressure
+   - **Note on cache usage metrics:** `vllm:gpu_cache_usage_perc` and `vllm:cpu_cache_usage_perc`
+     measure *current occupancy* (blocks in use at this instant), NOT offload activity or hit rate.
+     Neither metric reliably indicates when offloading is triggered — offloading fires when the GPU
+     pool needs to free blocks for incoming requests, which can happen at any usage level.
+     `cpu_cache_usage_perc = 0` on an external KV cache (OffloadingConnector) does mean no blocks
+     are currently offloaded. To confirm offloading is doing useful work, prefer:
+     - Per-request prefix cache hit rate metrics (if exposed by the connector)
+     - TTFT and `schedule_delay` trends across concurrency stages — rising delay at the predicted
+       saturation concurrency confirms KV pressure is real
+     - Throughput improvement vs the no-offload baseline at the same concurrency
+
+## Step 8 — Save the workload config
+
+Ask the user where to save the complete workload config file (or use the path they already provided). Then write the full YAML — including `dataset:` and `load:` sections — to that path. The file should include a header comment block documenting:
+
+- Source workload (URL or name)
+- Hardware target (GPU type, num pods, TP)
+- Key findings from the KV analysis (pool size, saturation threshold)
+- Any changes made from the original config (especially `num_conversations` adjustments)
+
+Do not skip this step even if the user hasn't explicitly asked to save — ask for the path if they haven't provided one.
 
 ## Output format
 
@@ -230,7 +248,17 @@ Write a clear, self-contained summary with:
 <YAML block>
 
 ### How to confirm offloading is working
-<bullet points>
+- `vllm:gpu_cache_usage_perc` and `vllm:cpu_cache_usage_perc` are occupancy metrics (blocks in
+  use now), not offload activity or hit-rate indicators — do not use them to infer whether
+  offloading is firing; offloading can trigger at any GPU usage level
+- `cpu_cache_usage_perc = 0` on an OffloadingConnector deployment does mean no blocks are
+  currently offloaded
+- `schedule_delay` and TTFT rising across concurrency stages: confirms KV pressure is real
+- Throughput vs no-offload baseline at same concurrency: the clearest signal that offloading helps
+- Per-request prefix cache hit rate (if exposed by the connector): direct measure of reuse
+
+### Saved to
+<file path written>
 ```
 
 ## Notes from prior experiments
