@@ -83,16 +83,27 @@ requests before offloading kicks in."
 ### For `conversation_replay` workload
 
 Ask for (or extract from the workload config):
-- `system_prompt_tokens` — shared system prompt length (tokens); use mean if variable
+- `shared_system_prompt_tokens` — static shared system prompt length (tokens)
+- `dynamic_system_prompt_tokens` — mean dynamic system prompt length (tokens); 0 if not used
 - `input_tokens_per_turn` — mean input per turn
 - `output_tokens_per_turn` — mean output per turn (generated)
 - `turns_per_conversation` — mean (or max for worst-case)
 - `num_conversations` — total distinct conversation contexts
+- `max_model_len` — effective context window; use the vLLM `--max-model-len` flag value if
+  set, otherwise default to `native_max_context` from `references/model-kv-params.md`
 
 **Peak context per session** (at the end of a conversation):
 ```
-peak_context_tokens = system_prompt_tokens + turns × (input_tokens_per_turn + output_tokens_per_turn)
+raw_peak = shared_system_prompt_tokens + dynamic_system_prompt_tokens
+           + turns × (input_tokens_per_turn + output_tokens_per_turn)
+
+peak_context_tokens = min(raw_peak, max_model_len)
 ```
+
+Clamping to `max_model_len` is mandatory: when the dynamic system prompt alone exceeds the
+context window (common in long-context agentic workloads), `raw_peak` is far larger than what
+any single session can actually hold. Using `raw_peak` unclamped would give
+`saturation_per_pod < 1`, producing a target concurrency too low to trigger offloading.
 
 ### For `otel_trace_replay` workload
 
@@ -148,17 +159,17 @@ Use escalating concurrency stages so results show the point where KV pressure st
 
 ```yaml
 load:
-  type: constant
+  type: concurrent
   num_workers: <ceil(target_concurrency / 4)>
   worker_max_concurrency: <target_concurrency × 2>
   stages:
-    - concurrency: <target_concurrency ÷ 4>
+    - concurrency_level: <target_concurrency ÷ 4>
       num_requests: <target_concurrency × 5>        # ~5 conversations per slot
-    - concurrency: <target_concurrency ÷ 2>
+    - concurrency_level: <target_concurrency ÷ 2>
       num_requests: <target_concurrency × 10>
-    - concurrency: <target_concurrency>
+    - concurrency_level: <target_concurrency>
       num_requests: <target_concurrency × 15>
-    - concurrency: <target_concurrency × 2>         # push well past saturation
+    - concurrency_level: <target_concurrency × 2>   # push well past saturation
       num_requests: <target_concurrency × 20>
 ```
 

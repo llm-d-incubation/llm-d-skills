@@ -2,33 +2,33 @@
 
 Used to compute KV bytes per token without requiring the user to look up internal model details.
 
-| Model | num_layers | num_kv_heads | head_dim | Notes |
-|---|---|---|---|---|
-| meta-llama/Llama-3.1-8B | 32 | 8 | 128 | GQA |
-| meta-llama/Llama-3.1-70B | 80 | 8 | 128 | GQA |
-| meta-llama/Llama-3.1-405B | 126 | 8 | 128 | GQA |
-| meta-llama/Llama-3.2-1B | 16 | 8 | 64 | GQA |
-| meta-llama/Llama-3.2-3B | 28 | 8 | 128 | GQA |
-| meta-llama/Llama-3.3-70B | 80 | 8 | 128 | same as 3.1-70B |
-| Qwen/Qwen2.5-7B | 28 | 4 | 128 | GQA |
-| Qwen/Qwen2.5-14B | 48 | 8 | 128 | GQA |
-| Qwen/Qwen2.5-32B | 64 | 8 | 128 | GQA |
-| Qwen/Qwen2.5-72B | 80 | 8 | 128 | GQA |
-| Qwen/Qwen3-8B | 36 | 8 | 128 | GQA |
-| Qwen/Qwen3-14B | 40 | 8 | 128 | GQA |
-| Qwen/Qwen3-32B | 64 | 8 | 128 | GQA |
-| Qwen/Qwen3-72B | 80 | 8 | 128 | GQA |
-| Qwen/Qwen3-235B-A22B | 94 | 4 | 128 | MoE, GQA; use active layers ≈ 94 |
-| Qwen/Qwen3.6-32B | 64 | 8 | 128 | estimate; verify from model config |
-| mistralai/Mistral-7B-v0.3 | 32 | 8 | 128 | GQA |
-| mistralai/Mistral-Nemo-12B | 40 | 8 | 128 | |
-| mistralai/Mixtral-8x7B | 32 | 8 | 128 | MoE, same KV shape per layer |
-| mistralai/Mistral-Small-3.1-24B | 40 | 8 | 128 | |
-| google/gemma-2-9b | 42 | 8 | 256 | |
-| google/gemma-2-27b | 46 | 16 | 256 | |
-| openai/gpt-oss-120b | 96 | 8 | 128 | estimate based on 120B scale; verify. **Empirical KV pool: 195,646 tokens/pod on 1× H100 80GiB, TP=1, quantized weights** (theoretical fp4+fp8 estimate of 73,600 was too low — actual weight footprint is smaller than assumed) |
-| ibm-granite/granite-3.3-8b-instruct | 32 | 8 | 128 | |
-| ibm-granite/granite-3.3-2b-instruct | 24 | 8 | 64 | |
+| Model | num_layers | num_kv_heads | head_dim | native_max_context | Notes |
+|---|---|---|---|---|---|
+| meta-llama/Llama-3.1-8B | 32 | 8 | 128 | 131072 | GQA |
+| meta-llama/Llama-3.1-70B | 80 | 8 | 128 | 131072 | GQA |
+| meta-llama/Llama-3.1-405B | 126 | 8 | 128 | 131072 | GQA |
+| meta-llama/Llama-3.2-1B | 16 | 8 | 64 | 131072 | GQA |
+| meta-llama/Llama-3.2-3B | 28 | 8 | 128 | 131072 | GQA |
+| meta-llama/Llama-3.3-70B | 80 | 8 | 128 | 131072 | same as 3.1-70B |
+| Qwen/Qwen2.5-7B | 28 | 4 | 128 | 131072 | GQA |
+| Qwen/Qwen2.5-14B | 48 | 8 | 128 | 131072 | GQA |
+| Qwen/Qwen2.5-32B | 64 | 8 | 128 | 131072 | GQA |
+| Qwen/Qwen2.5-72B | 80 | 8 | 128 | 131072 | GQA |
+| Qwen/Qwen3-8B | 36 | 8 | 128 | 131072 | GQA; 32k base, extendable to 128k via RoPE scaling |
+| Qwen/Qwen3-14B | 40 | 8 | 128 | 131072 | GQA; 32k base, extendable to 128k via RoPE scaling |
+| Qwen/Qwen3-32B | 64 | 8 | 128 | 131072 | GQA; 32k base, extendable to 128k via RoPE scaling |
+| Qwen/Qwen3-72B | 80 | 8 | 128 | 131072 | GQA; 32k base, extendable to 128k via RoPE scaling |
+| Qwen/Qwen3-235B-A22B | 94 | 4 | 128 | 131072 | MoE, GQA; use active layers ≈ 94 |
+| Qwen/Qwen3.6-32B | 64 | 8 | 128 | 131072 | estimate; verify from model config |
+| mistralai/Mistral-7B-v0.3 | 32 | 8 | 128 | 32768 | GQA |
+| mistralai/Mistral-Nemo-12B | 40 | 8 | 128 | 131072 | |
+| mistralai/Mixtral-8x7B | 32 | 8 | 128 | 32768 | MoE, same KV shape per layer |
+| mistralai/Mistral-Small-3.1-24B | 40 | 8 | 128 | 131072 | |
+| google/gemma-2-9b | 42 | 8 | 256 | 8192 | |
+| google/gemma-2-27b | 46 | 16 | 256 | 8192 | |
+| openai/gpt-oss-120b | 96 | 8 | 128 | 128000 | estimate based on 120B scale; verify. **Empirical KV pool: 195,646 tokens/pod on 1× H100 80GiB, TP=1, quantized weights** (theoretical fp4+fp8 estimate of 73,600 was too low — actual weight footprint is smaller than assumed) |
+| ibm-granite/granite-3.3-8b-instruct | 32 | 8 | 128 | 131072 | |
+| ibm-granite/granite-3.3-2b-instruct | 24 | 8 | 64 | 131072 | |
 
 ## GPU Memory Reference
 
