@@ -127,6 +127,11 @@ This is how many concurrent sessions, all at peak context size, would fill one p
 exactly. In practice, not all sessions are at peak simultaneously, so this is a conservative
 (lower) estimate.
 
+**Edge case — if `saturation_concurrency_per_pod < 1`**: a single session already exceeds the
+GPU KV pool. Every request triggers offloading; there is no "below saturation" regime. Set
+`T_total = num_decoder_pods` (c=1 per pod is already above saturation on every pod) and
+skip any stages below `num_decoder_pods` in the ladder.
+
 ### Total saturation concurrency (across all pods)
 
 ```
@@ -141,9 +146,15 @@ fires even under uneven routing.
 ### Recommended operating concurrency
 
 ```
+T_total = saturation_concurrency_total          # fleet-level saturation anchor for stage ladder
+c_knee  = round(T_total × 1.5)                 # onset of offloading: GPU first reaches 100%
+                                                # Most diagnostic stage for A/B comparison:
+                                                # Run A evicts blocks; Run B offloads to CPU.
+                                                # The TTFT delta between runs is largest here.
+
 target_concurrency = max(
     ceil(saturation_concurrency_per_pod × 1.5),   # 50% over saturation for reliable offloading
-    10                                              # minimum for meaningful measurement
+    10                                             # minimum for meaningful measurement
 )
 ```
 
@@ -151,27 +162,136 @@ The 1.5× factor ensures you're clearly above the threshold, accounting for vari
 session lengths and the fact that not all sessions reach peak context at the same instant.
 If the goal is to see *strong* offloading (large CPU hit rate), use 2×–3× instead.
 
-## Step 6 — Design the load stages
+### Verify working-set exceeds fleet KV capacity
 
-### For `conversation_replay`
+Before proceeding to stage design, confirm that eviction can actually occur:
 
-Use escalating concurrency stages so results show the point where KV pressure starts:
+```
+working_set_tokens = num_conversations × peak_context_tokens
+fleet_kv_capacity  = kv_pool_tokens × num_decoder_pods
+
+required: working_set_tokens > fleet_kv_capacity
+```
+
+If this condition is **not** met, all active sessions' KV fits within the fleet's GPU memory.
+High concurrency alone will not cause eviction, and OffloadingConnector will never fire.
+To fix: increase `num_conversations` until `working_set_tokens > fleet_kv_capacity`.
+
+## Step 6 — Choose load mode and design stages
+
+Two modes are available. Use **`benefit`** by default. Use **`fast-check`** only when the user explicitly asks for a fast or quick run.
+
+| Mode | Goal | Stages | replay_density |
+|------|------|--------|----------------|
+| **benefit** *(default)* | Authoritative A/B: proves offloading improves TTFT and throughput. Both runs complete all requests; the A/B signal is TTFT reduction, `schedule_delay` decrease, and `achieved_rate` improvement at the heavy-pressure stage. | 5 | ≥ 20 |
+| **fast-check** | Quick validation: confirms offloading direction with shorter stages. Use only when the user explicitly asks for a fast or quick run. | 5 | ≥ 10 |
+
+With tiered-prefix-cache EPP (cpu-prefix-cache-scorer), requests queue rather than fail under KV pressure — both runs complete all requests regardless of OffloadingConnector.
+
+### For `conversation_replay` — benefit mode (default)
+
+5-stage ladder with mild-offload stage included. Uses `num_decoder_pods`× base request multiplier. Targets replay_density ≥ 20 to give CPU-cached blocks time to be re-requested.
 
 ```yaml
 load:
   type: concurrent
-  num_workers: <ceil(target_concurrency / 4)>
-  worker_max_concurrency: <target_concurrency × 2>
+  num_workers: <ceil(T_total × 2 / 4)>
+  worker_max_concurrency: <T_total × 4 × 2>
   stages:
-    - concurrency_level: <target_concurrency ÷ 4>
-      num_requests: <target_concurrency × 5>        # ~5 conversations per slot
-    - concurrency_level: <target_concurrency ÷ 2>
-      num_requests: <target_concurrency × 10>
-    - concurrency_level: <target_concurrency>
-      num_requests: <target_concurrency × 15>
-    - concurrency_level: <target_concurrency × 2>   # push well past saturation
-      num_requests: <target_concurrency × 20>
+    - concurrency_level: <T_total ÷ 2>             # warmup: GPU fills, no offloading
+      num_requests: <round(T_total × num_decoder_pods × 2.5)>
+    - concurrency_level: <c_knee>                  # KNEE (1.5×T): offloading onset
+      num_requests: <round(T_total × num_decoder_pods × 15)>
+    - concurrency_level: <T_total × 2>             # mild sustained offloading
+      num_requests: <round(T_total × num_decoder_pods × 25)>
+    - concurrency_level: <T_total × 4>             # heavy offloading pressure
+      num_requests: <round(T_total × num_decoder_pods × 25)>
+    - concurrency_level: <T_total × 2>             # re-request: revisit sessions whose KV blocks
+      num_requests: <round(T_total × num_decoder_pods × 25)>      # were offloaded in stages 3–4; exercises the
+                                                    # CPU reload (cache-hit) path
 ```
+
+For gpt-oss-120b (T_total=12, 8 pods, num_conversations=300):
+
+```yaml
+  num_workers: 6
+  worker_max_concurrency: 96
+  stages:
+    - concurrency_level: 6      # T/2 — warmup
+      num_requests: 240
+    - concurrency_level: 18     # 1.5T — knee
+      num_requests: 1440
+    - concurrency_level: 24     # 2T — mild offloading
+      num_requests: 2400
+    - concurrency_level: 48     # 4T — heavy offloading
+      num_requests: 2400
+    - concurrency_level: 24     # 2T — re-request (CPU reload)
+      num_requests: 2400
+```
+
+Total: 8,880 requests / 300 conversations = 29.6 replay_density.
+
+### For `conversation_replay` — fast-check mode
+
+Same 5-stage structure as benefit mode. Stages 2–4 use `round(T_total × 60)` requests — approximately 1/3 of full benefit, empirically validated on gpt-oss-120b (8× H100, TP=1). Use only when the user explicitly asks for a fast or quick run.
+
+```yaml
+load:
+  type: concurrent
+  num_workers: <ceil(T_total × 2 / 4)>
+  worker_max_concurrency: <T_total × 4 × 2>
+  stages:
+    - concurrency_level: <T_total ÷ 2>             # warmup: GPU fills, no offloading
+      num_requests: <round(T_total × num_decoder_pods × 2.5)>
+    - concurrency_level: <c_knee>                  # KNEE (1.5×T): offloading onset
+      num_requests: <round(T_total × num_decoder_pods × 15)>
+    - concurrency_level: <T_total × 2>             # mild sustained offloading
+      num_requests: <round(T_total × 60)>
+    - concurrency_level: <T_total × 4>             # heavy offloading pressure
+      num_requests: <round(T_total × 60)>
+    - concurrency_level: <T_total × 2>             # re-request: CPU reload path
+      num_requests: <round(T_total × 60)>
+```
+
+For gpt-oss-120b (T_total=12, 8 pods, num_conversations=300):
+
+```yaml
+  num_workers: 6
+  worker_max_concurrency: 96
+  stages:
+    - concurrency_level: 6      # T/2 — warmup
+      num_requests: 240
+    - concurrency_level: 18     # 1.5T — knee (dominates runtime)
+      num_requests: 1440
+    - concurrency_level: 24     # 2T — mild offloading
+      num_requests: 720
+    - concurrency_level: 48     # 4T — heavy offloading
+      num_requests: 720
+    - concurrency_level: 24     # 2T — re-request (CPU reload)
+      num_requests: 720
+```
+
+Total: 3,840 requests / 300 conversations = 12.8 replay_density. Sufficient to confirm offloading direction; not sufficient to maximize CPU hit rate.
+
+**Replay density** — the number of times each conversation is re-requested — determines
+whether CPU-offloaded blocks are ever re-loaded. CPU cache hits only occur when a session
+is requested *after* its blocks were evicted to CPU.
+
+```
+replay_density = total_requests / num_conversations
+fast-check: ≥ 10 — sufficient to observe TTFT benefit and confirm offloading direction
+benefit:    ≥ 20 — sufficient to maximize CPU KV hit rate and throughput delta
+```
+
+With fast-check mode and num_conversations=300 (T=12):
+- total = 240 + 1440 + 720 + 720 + 720 = 3,840 → replay_density = 12.8
+
+With benefit mode (num_decoder_pods=8) and num_conversations=300 (T=12):
+- total = 240 + 1440 + 2400 + 2400 + 2400 = 8,880 → replay_density = 29.6
+
+If the data section is fixed at num_conversations=300 and replay_density ≥ 20 is required,
+use benefit mode. To reach replay_density ≥ 20 with fewer requests, reduce
+num_conversations to ~55 instead.
 
 **num_conversations** must be at least `5 × max_concurrency` to avoid session-lock deadlock
 (see memory: conversation_replay_num_conversations deadlock). Round up to the nearest hundred.
@@ -206,10 +326,11 @@ Write a clear, self-contained summary with:
 
 1. **KV pool math** — show the computation so the user can verify or adjust inputs
 2. **Saturation point** — the concurrency threshold where offloading starts
-3. **Recommended concurrency** — with rationale (1.5× for mild, 2–3× for strong offloading)
+3. **Mode selected** — `benefit` (default) or `fast-check` (explicit request only), with rationale
 4. **Complete `load:` YAML** — ready to paste into the benchmark config
 5. **Metrics to watch** — tell the user how to confirm offloading is active:
-   - `schedule_delay` rising sharply as concurrency increases → KV queue building
+   - `schedule_delay` **mean** rising sharply across concurrency stages → KV queue is building. Mean > 60s at the target stage indicates meaningful pressure; > 300s indicates heavy queuing (requests waiting several minutes before dispatch).
+   - `vllm:external_prefix_cache_hit_rate` (in the `_aggregated` section of `metrics_summary.json`) — the most immediately findable CPU KV activity signal. Mean > 0 confirms the CPU KV cache is actively serving hits.
    - **Note on cache usage metrics:** `vllm:gpu_cache_usage_perc` and `vllm:cpu_cache_usage_perc`
      measure *current occupancy* (blocks in use at this instant), NOT offload activity or hit rate.
      Neither metric reliably indicates when offloading is triggered — offloading fires when the GPU
@@ -220,6 +341,25 @@ Write a clear, self-contained summary with:
      - TTFT and `schedule_delay` trends across concurrency stages — rising delay at the predicted
        saturation concurrency confirms KV pressure is real
      - Throughput improvement vs the no-offload baseline at the same concurrency
+- **OffloadingConnector-specific metrics** (check `metrics/processed/metrics_summary.json`):
+  - `vllm:external_prefix_cache_hit_rate` — **in `_aggregated`**, immediately available without per-pod inspection. Check this first. Mean > 0 confirms CPU KV cache hits are occurring.
+  - `vllm:kv_offload_total_bytes_total` > 0 confirms offloading physically fired. **Per-pod only — NOT in `_aggregated`.** Look in the per-pod sections of `metrics_summary.json` or ask the run operator for the values. Zero in early-stage scrapes is expected (offloading fires at stage 3+). TB-scale values (0.5–2 TB per pod) are normal under benefit-mode loads. **This metric is not always surfaced in summary results — ask for it explicitly if you need confirmation.**
+  - `vllm:kv_offload_size_count` — GPU→CPU and CPU→GPU event counts. **Per-pod only — collect explicitly** using `oc exec` or by scraping `/metrics` on each decode pod after the run. The GPU_to_CPU / CPU_to_GPU count ratio measures CPU cache reload efficiency: a ratio > 5 means most offloaded blocks were never reloaded back — increase `replay_density` next run. Pod-level variance of 3–4× in offload counts is normal with cpu-prefix-cache-scorer (routing hot-spots concentrate load); near-uniform values across pods would indicate the scorer is not routing by prefix effectively. To collect: `for POD in $(oc get pods -n $NS --no-headers | grep decode | awk '{print $1}'); do echo "=== $POD ==="; oc exec $POD -n $NS -- curl -s localhost:8000/metrics | grep kv_offload_size_count; done`
+  - `vllm:kv_offload_total_time_total` — cumulative offload time; divide by event count for avg per-transfer latency (per-pod only)
+  - `vllm:kv_cache_usage_perc` — should peak ≥ 95% in the offloading run before offload triggers
+  - `vllm:prefix_cache_hits_total` / `vllm:prefix_cache_queries_total` — compute
+    `actual_hit_rate = hits / queries` (do NOT use the raw `prefix_cache_hit_rate` counter — it
+    is not a percentage)
+
+  A successful OffloadingConnector demonstration shows:
+  1. `vllm:external_prefix_cache_hit_rate` > 0 in `_aggregated` (CPU KV cache is serving hits)
+  2. `kv_offload_total_bytes_total` > 0 in per-pod sections at stages 3–5 (offloading is physically active)
+  3. Lower TTFT and higher `achieved_rate` in the offloading run vs baseline at the **heavy-pressure stage** (c = 4T)
+  4. Higher `prefix_cache_hits_total` in the offloading run at the re-request stage
+
+  If TTFT is higher in the offloading run despite offloading firing, the cause is low
+  `replay_density` — increase `num_requests` per stage before concluding the connector
+  is net-negative.
 
 ## Step 8 — Save the workload config
 
@@ -254,6 +394,7 @@ Do not skip this step even if the user hasn't explicitly asked to save — ask f
 ### Recommendation
 - Target concurrency: <T> (1.5× saturation per pod)
 - For strong offloading: <T2> (2–3× saturation)
+- **Load mode**: benefit (default) or fast-check (explicit request only) — state which and why
 
 ### Load configuration (ready to use)
 <YAML block>
@@ -287,3 +428,16 @@ Do not skip this step even if the user hasn't explicitly asked to save — ask f
 - The `--max-num-seqs=512` flag on OffloadingConnector pods limits the scheduler warmup to
   avoid OOM from the GPU staging buffer. This also caps the effective concurrency per pod at 512.
   If target_concurrency per pod exceeds 512, note that requests will queue.
+- **Stage lifecycle metrics** (`summary_session_lifecycle_metrics.json`) are generated per completed stage but may be absent for stages that end early (e.g., truncated results copy, EOF error during collection). Always verify which stages have lifecycle data before comparing TTFT across runs — missing lifecycle files for a stage do not mean the stage failed, only that per-stage summary metrics are unavailable for it.
+- **Warmup stage (c = T/2) will show run-B TTFT slightly worse than run-A.** OffloadingConnector initialization and staging-buffer overhead is visible when the GPU KV pool is not yet under pressure. This reverses at the knee stage (c=1.5T) and improves further through stages 2–4. Do not flag warmup-stage TTFT as a regression.
+- **Workload fit for OffloadingConnector**: the connector shows TTFT *benefit* only when
+  CPU-offloaded blocks are re-requested. Two conditions must both hold:
+  1. `replay_density = total_requests / num_conversations ≥ 10` — sessions are re-requested
+     often enough that CPU-cached blocks get a chance to be loaded back (≥ 20 for maximum hit rate)
+  2. `working_set_tokens = num_conversations × peak_context_tokens > kv_pool_tokens × num_pods`
+     — the active session set exceeds total GPU KV capacity, so eviction/offload actually occurs
+
+  If only condition 2 holds (high concurrency, low replay), the benchmark confirms offloading
+  is *active* but TTFT may still be *worse* than baseline due to load/evict overhead without
+  the cache-hit payoff. This is a valid result — it documents the overhead regime — but is not
+  a demonstration of benefit. To demonstrate benefit, both conditions must hold.
