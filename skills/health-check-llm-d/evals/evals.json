@@ -1,0 +1,85 @@
+{
+  "skill_name": "health-check-llm-d",
+  "evals": [
+    {
+      "id": 1,
+      "name": "basic-health-check",
+      "prompt": "I have my llm-d stack running in the dolev-inf namespace. Can you check if all the GPUs are healthy?",
+      "expected_output": "Should detect namespace from the user message or NAMESPACE env var. Should find vLLM pods with kubectl, discover the model name, then port-forward each pod and run gpu-health-probe.py. Should present a per-pod TTFT table with HEALTHY/SUSPICIOUS/UNHEALTHY status and clean up all port-forwards afterward.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 2,
+      "name": "post-deployment-validation",
+      "prompt": "I just deployed llm-d, all pods show Ready. Run a quick GPU sanity check before I start benchmarking.",
+      "expected_output": "Should recognize this as a health check trigger. Should verify pods are Running/Ready, discover vLLM pods, determine model name, run the probe script with default parameters (8 requests, 50 max_tokens, 2.0x threshold), and report results. Should confirm all GPUs healthy before suggesting the user proceed to benchmarking.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 3,
+      "name": "suspicious-latency-investigation",
+      "prompt": "Some of my inference requests seem much slower than others. I think one GPU might be bad. Can you check?",
+      "expected_output": "Should identify this as a GPU health check scenario. Should probe all pods, compare TTFT across them, and flag any pod whose mean TTFT is more than 2x the median. Should suggest checking CUDA errors in pod logs and node GPU allocation if any pod is flagged as SUSPICIOUS.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 4,
+      "name": "pd-disaggregated-deployment",
+      "prompt": "My llm-d stack uses PD disaggregation with 4 prefill pods and 4 decode pods. Check all GPUs.",
+      "expected_output": "Should discover both prefill and decode pods using role-based labels or name patterns. Should probe all 8 pods, noting that decode pods are the primary target for generation throughput. Should show TTFT table for all pods and flag outliers within each group.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 5,
+      "name": "custom-parameters",
+      "prompt": "Run a GPU health check but use 20 requests per pod and flag anything more than 1.5x the median as suspicious.",
+      "expected_output": "Should use --requests 20 and --threshold 1.5 when calling gpu-health-probe.py. Should confirm parameter overrides with the user before running. Should apply stricter flagging and report any pods exceeding the 1.5x threshold.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 6,
+      "name": "failed-pod-handling",
+      "prompt": "Check GPU health — I'm not sure all pods are reachable.",
+      "expected_output": "Should verify all pods are Running before starting. Should handle port-forward failures gracefully by marking unreachable pods as UNHEALTHY rather than hanging. Should kill all port-forwards on completion and report which pods failed along with suggested diagnostic steps.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 7,
+      "name": "single-gpu-drift-detection",
+      "prompt": "I only have one vLLM pod on one GPU, so there are no peers to compare against. Can you still tell me if the GPU is slower than usual?",
+      "expected_output": "Should resolve a stable GPU identity (node name via kubectl, plus GPU UUID via nvidia-smi exec if permitted, falling back to node name). Should run the probe with --gpu-ids and --history so the single GPU is compared against its own past runs. Should explain that peer comparison is weak with one pod but drift-vs-history is the reliable signal once at least 2 prior HEALTHY runs exist, and that the first run(s) only build the baseline.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 8,
+      "name": "regression-since-last-run",
+      "prompt": "I ran a health check on this cluster last week and everything was fine. Run it again and tell me if any GPU has gotten slower since then.",
+      "expected_output": "Should locate the per-cluster history file (under $HOME/.llm-d-health-check or LLMD_HEALTH_HISTORY_DIR), pass --history and --gpu-ids, and use the drift threshold (default 1.5x) to flag any GPU whose TTFT or TPOT regressed vs its recorded baseline. Should present the History baselines section showing current-vs-baseline and record the new run. Should note that a run flagged SUSPICIOUS is stored as such so it won't poison future baselines.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 9,
+      "name": "ephemeral-pod-names-stable-identity",
+      "prompt": "Pods get recreated with new names every deploy. How does history tracking still work across restarts?",
+      "expected_output": "Should explain that history is keyed by a stable GPU identity (node name and/or GPU UUID), never by the ephemeral pod name, so a recreated pod on the same GPU is still matched to its baseline. Should show how --gpu-ids is built from kubectl node lookup plus best-effort nvidia-smi UUID.",
+      "files": [],
+      "assertions": []
+    },
+    {
+      "id": 10,
+      "name": "history-privacy",
+      "prompt": "Can we share these GPU stats with the team so everyone benefits from a common baseline?",
+      "expected_output": "Should explain the current skill stores history locally per user and does not upload or share it. Should raise the two caveats for sharing: (1) absolute TTFT/TPOT only transfer between users when hardware + model + TP size + max_tokens match, so a shared file must be bucketed by those; (2) node/cluster names are internal identifiers and must be anonymized before committing anywhere shared, with explicit opt-in. Should not commit the local history file as-is.",
+      "files": [],
+      "assertions": []
+    }
+  ]
+}
