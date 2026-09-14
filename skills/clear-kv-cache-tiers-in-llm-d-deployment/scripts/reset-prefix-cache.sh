@@ -31,6 +31,9 @@ POD_COUNT=$(echo "$POD_NAMES" | wc -w | tr -d ' ')
 echo "Found $POD_COUNT vLLM pod(s)"
 echo ""
 
+RETRY_COUNT="${RESET_RETRY_COUNT:-3}"
+RETRY_DELAY="${RESET_RETRY_DELAY:-2}"
+
 SUCCESS=0
 FAILED=0
 FAILED_PODS=""
@@ -55,8 +58,39 @@ for POD in $POD_NAMES; do
   BODY=$(echo "$RESPONSE" | sed '$d')
 
   if [ "$HTTP_CODE" = "200" ]; then
-    echo "OK"
-    SUCCESS=$((SUCCESS + 1))
+    # vLLM >= 0.26.0 returns 200 with {"success": false} when blocks are still
+    # held by in-flight offload transfers. Retry until success or limit reached.
+    # No "success: false" in body (or empty body) means success — old vLLM returns empty or {"success": true}.
+    ATTEMPT=0
+    RESET_FAILED=false
+    while [ -n "$BODY" ] && echo "$BODY" | grep -q '"success"[[:space:]]*:[[:space:]]*false'; do
+      ATTEMPT=$((ATTEMPT + 1))
+      if [ "$ATTEMPT" -gt "$RETRY_COUNT" ]; then
+        echo "FAILED (success:false after $RETRY_COUNT retries — in-flight blocks still held)"
+        RESET_FAILED=true
+        break
+      fi
+      echo -n "(success:false, retry $ATTEMPT/$RETRY_COUNT) "
+      sleep "$RETRY_DELAY"
+      RESPONSE=$(kubectl exec -n "$NAMESPACE" "$POD" -- \
+        curl -s -w "\n%{http_code}" -X POST \
+        "http://localhost:${VLLM_PORT}/reset_prefix_cache?reset_running_requests=${RESET_RUNNING}&reset_external=${RESET_EXTERNAL}" \
+        2>/dev/null) || true
+      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+      if [ "$HTTP_CODE" != "200" ]; then
+        echo "FAILED (HTTP $HTTP_CODE on retry $ATTEMPT)"
+        RESET_FAILED=true
+        break
+      fi
+    done
+    if $RESET_FAILED; then
+      FAILED=$((FAILED + 1))
+      FAILED_PODS="${FAILED_PODS} ${POD}"
+    else
+      echo "OK"
+      SUCCESS=$((SUCCESS + 1))
+    fi
   elif [ "$HTTP_CODE" = "404" ]; then
     echo "FAILED (endpoint not found — is VLLM_SERVER_DEV_MODE=1 set?)"
     FAILED=$((FAILED + 1))
