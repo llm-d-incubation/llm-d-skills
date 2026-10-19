@@ -53,6 +53,7 @@ Alternatively, copy any skill directory from [`skills/`](skills/) into `.claude/
 | [deploy-llm-d](skills/deploy-llm-d/) | Configure and deploy llm-d on existing Kubernetes and OpenShift clusters. |
 | [teardown-llm-d](skills/teardown-llm-d/) | Tear down, remove, clean up, or undeploy a deployed llm-d stack. |
 | [run-llm-d-benchmark](skills/run-llm-d-benchmark/) | Run a benchmark workload against an already deployed llm-d stack using llm-d-benchmark tooling. |
+| [run-fma-benchmark](skills/run-fma-benchmark/) | Run the Fast Model Actuation (FMA) actuation-timing benchmark (nop harness, standup → run → teardown) measuring hot/warm/cold actuation latency. |
 | [compare-llm-d-configurations](skills/compare-llm-d-configurations/) | Compare the benchmark performance of two llm-d stack configurations end-to-end. |
 | [configure-wva-autoscaling-llm-d](skills/configure-wva-autoscaling-llm-d/) | Configure and optimize Workload Variant Autoscaler (WVA) for llm-d inference deployments. |
 | [clear-kv-cache-tiers-in-llm-d-deployment](skills/clear-kv-cache-tiers-in-llm-d-deployment/) | Clear all KV / prefix cache tiers (GPU, CPU, and FS offload) on every vLLM pod for a clean benchmarking state. |
@@ -71,6 +72,7 @@ The single-purpose skills above each do **one** operation you already know you w
 | Decide *what* llm-d config fits a workload + SLA, then stand it up from scratch | **autoconfig** |
 | Deploy/verify/customize a config you already know | [`deploy-llm-d`](skills/deploy-llm-d/) |
 | Benchmark an already-deployed stack | [`run-llm-d-benchmark`](skills/run-llm-d-benchmark/) |
+| Measure Fast Model Actuation (FMA) actuation latency (hot/warm/cold) | [`run-fma-benchmark`](skills/run-fma-benchmark/) |
 | Compare two stack configurations end-to-end | [`compare-llm-d-configurations`](skills/compare-llm-d-configurations/) |
 | Configure WVA autoscaling | [`configure-wva-autoscaling-llm-d`](skills/configure-wva-autoscaling-llm-d/) |
 | Tear down a deployed stack | [`teardown-llm-d`](skills/teardown-llm-d/) |
