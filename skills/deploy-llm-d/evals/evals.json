@@ -1,0 +1,29 @@
+{
+  "skill_name": "deploy-llm-d",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Deploy the optimized-baseline guide into namespace llm-d-test on my cluster. The llm-d checkout is at ~/src/llm-d.",
+      "expected_output": "Sets LLMD_PATH, confirms scripts/guide.py exists, summarizes guides/optimized-baseline with list-guide-steps.py, detects the accelerator and maps it to ACCELERATOR_TYPE, checks the llm-d-hf-token Secret and the GAIE CRDs, presents the detected configuration, renders deployments/deploy-YYYYMMDD.sh with guide.py emit (standalone mode, prerequisites.clone excluded), asks for confirmation, executes one section per emit invocation, validates with Kubernetes state only, and asks before running the connectivity test.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Stand up prefill/decode disaggregation with vLLM on our H200 nodes. We have never installed anything llm-d related on this cluster.",
+      "expected_output": "Selects guides/pd-disaggregation with ACCELERATOR_TYPE=gpu, MODEL_SERVER=vllm, INFRA_PROVIDER=base (or gke when GKE labels are detected). Detects that the GAIE CRDs and the LeaderWorkerSet controller with DisaggregatedSet support are missing, explains that prerequisites.gaie and prerequisites.lws are cluster-scoped, shows their emitted commands, and runs them only after explicit confirmation. Waits for the DisaggregatedSet roles to become Ready before validation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Deploy optimized-baseline but serve meta-llama/Llama-3.1-8B-Instruct with 1 replica instead of the default.",
+      "expected_output": "Does not edit any file under the llm-d checkout. Creates deployments/<name>/kustomization.yaml with the upstream overlay as base and a patch for the model name and replicas, applies it in place of the emitted deploy.modelserver step, passes the custom MODEL to the router through the emitted variables, and records the customization in deployments/deploy-YYYYMMDD.sh.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Put llm-d behind our existing GKE Gateway named llm-d-inference-gateway in namespace inference.",
+      "expected_output": "Selects gateway mode, maps the gke-l7-* GatewayClass to provider.name=gke, emits deploy.gateway instead of deploy.standalone, verifies Gateway PROGRAMMED=True and HTTPRoute ACCEPTED=True, and warns that provider.name=none would produce 503 responses on GKE.",
+      "files": []
+    }
+  ]
+}
