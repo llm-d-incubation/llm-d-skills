@@ -45,3 +45,26 @@ explicit uninstall from the workflow) once the teardown-cleanup fix has been
 stable across a few release cycles and pre-fix checkouts are no longer in use —
 at that point "checkouts before the fix" no longer describes anything anyone
 runs, and carrying the workaround only adds noise.
+
+## Separate leftover: the `llm-d-prism` deployment survives teardown
+
+On current FMA (v0.7.0+ / recent nightly), `run` deploys an `llm-d-prism`
+component (observability; added in llm-d/llm-d-benchmark#2048) that carries the
+label **`llm-d-benchmark.ai/persist=true`**. `llmdbenchmark teardown` intentionally
+leaves it in place — so after a "Teardown complete" you will still see a running
+`llm-d-prism-*` pod plus its Service and Route. This is **not** the helm leak
+above; it is a deliberately-persisted component. But it **blocks a clean
+next-standup check** (`kubectl get pods -n $NS` is not empty) and lingers across
+model switches.
+
+If you need a fully clean namespace before the next model (recommended between
+models so the readiness/clean checks are unambiguous), remove it explicitly:
+
+```
+kubectl delete deployment,service,route -n $NS -l app.kubernetes.io/name=llm-d-prism --ignore-not-found
+# if the pod is wedged in Error/Terminating, also:
+kubectl delete pod -n $NS -l app.kubernetes.io/name=llm-d-prism --force --grace-period=0 --ignore-not-found
+```
+
+Then `kubectl get pods -n $NS` should be empty. (Observed repeatedly on v0.7.0,
+2026-10-21 — teardown left `llm-d-prism` running every cycle.)

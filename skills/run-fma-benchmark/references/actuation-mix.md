@@ -60,6 +60,13 @@ The "few cold starts even with population off" behavior (as low as one cold
 sample in a 10-iteration run) was observed with the **Qwen3-4B** model. The
 mechanism is model-independent; the specific counts are not.
 
+With **population on** (the default `cicd/ocp` posture: 15 pre-warmed launchers),
+two verified 10-iteration runs produced **zero cold** samples, as this file
+predicts — Qwen3-4B: 6 hot / 4 warm; Qwen3-8B: 4 hot / 6 warm (FMA v0.7.0,
+single 80GB GPU, 2026-10-21). All iterations used `timing_source=dpc`. So on the
+stock scenario you should expect a hot/warm split and no cold path unless you
+steer for it (below).
+
 ## Compile-cache fairness note
 
 When `VLLM_CACHE_ROOT` points at a shared PVC, torch.compile / Inductor / Triton

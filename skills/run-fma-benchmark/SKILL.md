@@ -70,13 +70,26 @@ platform scenario within it (siblings target other platforms, e.g. `cks`, `gke`,
 
 - **CLI available.** Either an already-active virtualenv that has the
   llm-d-benchmark CLI installed (verify with `llmdbenchmark --version`), or a
-  fresh Python 3.12 venv with `./install.sh` run in the repo. If a venv is
-  already active and `llmdbenchmark` resolves, you do not need to reinstall.
+  fresh venv with `./install.sh` run in the repo. If a venv is already active and
+  `llmdbenchmark` resolves, you do not need to reinstall.
+  - **Python version matters.** Current `main` declares `requires-python >=3.14`
+    and uses 3.14-only syntax (PEP 758 unparenthesized `except X, Y:`), so the CLI
+    **will not even import on Python < 3.14** (`SyntaxError` at `cli.py`). Use a
+    **Python 3.14** venv for current `main` (e.g. `uv python install 3.14` +
+    `uv venv --python 3.14 <path>`; note `uv` only serves a *final* 3.14.x if its
+    index is fresh — `pip install -U uv` if it offers only an rc). Older checkouts
+    (≤ ~Sept 2026) still run on 3.12. Also install the separate `planner` package
+    the CLI imports: `pip install git+https://github.com/llm-d-incubation/llm-d-planner.git@<ver>`
+    (install.sh does this for you).
 - **Cluster access.** The user runs `oc login` / populates the kubeconfig; this
   skill does not log in. Verify with `kubectl config current-context` and
   `kubectl get ns <namespace>`.
 - **Tooling.** helm >= v3.19.0 (Helm 3.19.x is fine — the guide's "v4.2.0" is a
-  stale note), helmfile >= v1.5.0.
+  stale note), helmfile >= v1.5.0. **bash:** the FMA installer (`install-fma.sh`,
+  fetched at standup) historically word-split unquoted here-strings under macOS's
+  **bash 3.2** (fixed for the YAML path in FMA v0.7.0 / #757, remaining JSON
+  here-strings cleaned in #804). Prefer FMA **>= v0.7.0** (`--set fma.chart.version`)
+  to avoid the bash-3.2 standup failure; v0.6.5 fails at `fma_deploy` on bash 3.2.
 - **GPU node label.** GPU nodes must carry `nvidia.com/gpu.present=true` (the
   `LauncherPopulationPolicy` node selector hardcodes it). The NVIDIA GPU Operator
   sets this on OpenShift; on vanilla k8s / ACK / GKE / EKS you may need to label
@@ -210,20 +223,48 @@ copy is local by the time teardown runs.
 
 ### Step 5 — Verify results exist, then parse
 
-Confirm the summary file is present before trusting "Run complete" — the harness
-pod can end before writing the summary:
+**On current FMA (v0.7.0+) a successful run PACKS results into an archive — there
+is no loose `result.yaml` to `find`.** The run collects
+`<WS>/<workspace-id>/results/nop-*_1/workspace.tar.zst`, and `result.yaml` lives
+*inside* it. (`find $WS -name result.yaml` returns nothing on a clean run — that
+is expected, not a failure.) Loose, uncompressed result files appear ONLY when a
+run fails ("collecting results uncompressed"), so compressed-vs-loose is itself a
+success/failure signal.
+
+Confirm the archive exists, then extract and parse:
 
 ```
-find $WS -name result.yaml
+find $WS -name workspace.tar.zst            # the per-run results archive
+tar --use-compress-program=unzstd -xf <WS>/<workspace-id>/results/nop-*_1/workspace.tar.zst -C /tmp/fma-result
 ```
 
-Results live at `<WS>/<workspace-id>/results/nop-*/result.yaml`. Parse with the
-venv Python (system Python may not have yaml). Per iteration, read
+Then parse `/tmp/fma-result/result.yaml` with the venv Python (system Python may
+not have yaml). Per iteration, read
 `extra_metrics[0].iterations[*].launcher_infos[0]` for `actuation_condition`,
 `timing_source`, and whichever of `t_wake` / `t_instance_create` /
 `t_cold_launcher` is set. Full parse snippet in `references/parse-results.md`.
 Confirm `scenario.model.name` matches the model you intended (a 4B fallback shows
 up here).
+
+### Step 5b — Present the results (always end a run with this)
+
+Do not leave the user with raw per-iteration dumps. **End every run by showing a
+compact table + a one-paragraph synopsis** that says what the metrics mean and
+what this run's numbers were, so a reader who has never seen FMA output can
+interpret it. Report, per model:
+
+- **Model**, total **iterations**, and the **hot / warm / cold mix** (counts).
+- Per path that occurred: **count**, and **median** (+ min–max) of its timing
+  field — `t_wake` (hot), `t_instance_create` (warm), `t_cold_launcher` (cold),
+  in seconds.
+- **`timing_source`**: confirm `dpc` for all (note if any fell back to a Kube
+  anchor — those are looser and should be flagged, not silently averaged).
+
+Then a plain-English synopsis: one line defining each path (hot = waking a
+sleeping instance, sub-second; warm = launcher forks a new instance, ~tens of
+seconds; cold = a launcher is created first, then forks), and what this run
+showed. See `references/parse-results.md` for the table template + synopsis
+wording and a worked example.
 
 ### Step 6 — Teardown (mandatory) + Helm uninstall
 
@@ -257,7 +298,7 @@ model until Step 6 shows a clean namespace.
 | Run "succeeds" but 0 iters, results show a different (smaller) model | Model `--set` omitted on run -> 4B fallback | `references/model-swap.md` |
 | Launcher child OOMs at sampler warmup / `EngineCore failed to start` | No KV-cache cap on `cicd/ocp`; sleep-mode + warmup exceed GPU headroom | Step 1 KV cap; `references/kv-cache-oom.md` |
 | Standup fails `Data access pod not ready: Timed out after 120s` | Harness data-access pod cold-pulling the ~7GB nightly image > 120s; pod comes up healthy after | Step 3 note — just re-run standup |
-| Run aborts, 0 iters, `ValidationError ... read_namespaced_pod_log` / `pretty` | Harness bug on `pydantic>=2.14` (bool `pretty=False`); baked into the image | upstream llm-d/llm-d-benchmark#2078 |
+| Run aborts, 0 iters, `ValidationError ... read_namespaced_pod_log` / `pretty` | `pydantic>=2.14` harness bug (bool `pretty=False`) — **fixed in #2078 (merged)**. If you still hit it, your harness image predates the fix: pull/rebuild the latest `llm-d-benchmark:nightly` (or build a branch-tagged image). | llm-d/llm-d-benchmark#2078 (fixed) |
 | Instance never `is_sleeping` / requester stuck `stopped` | Multiple root causes share this signature | `references/stopped-triage.md` |
 | Next same-model standup hangs "no pods found" ~900s | Teardown left the Helm release `deployed` | `references/teardown-helm-leak.md` |
 | Launchers never schedule | GPU nodes missing `nvidia.com/gpu.present=true` | Prerequisites |
