@@ -10,7 +10,7 @@
       "name": "llm-d-all",
       "source": "./",
       "skills": [],
-      "description": "Install every llm-d skill at once. Ships no skills of its own, it only pulls in the eight individual plugins, so it can be combined with them without duplicating anything.",
+      "description": "Install every llm-d skill at once. Ships no skills of its own, it only pulls in the nine individual plugins, so it can be combined with them without duplicating anything.",
       "category": "devops",
       "license": "Apache-2.0",
       "homepage": "https://github.com/llm-d-incubation/llm-d-skills",
@@ -23,6 +23,7 @@
         "llm-d-autoconfig",
         "deploy-llm-d",
         "run-llm-d-benchmark",
+        "run-fma-benchmark",
         "compare-llm-d-configurations",
         "configure-wva-autoscaling-llm-d",
         "clear-kv-cache-tiers-in-llm-d-deployment",
@@ -111,6 +112,29 @@
       ],
       "license": "Apache-2.0",
       "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/run-llm-d-benchmark",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
+    },
+    {
+      "name": "run-fma-benchmark",
+      "source": "./",
+      "skills": [
+        "./skills/run-fma-benchmark"
+      ],
+      "description": "Run llm-d-benchmark's Fast Model Actuation (FMA) actuation-timing benchmark on an OpenShift/Kubernetes cluster — the standup -> run -> teardown loop with the nop harness that measures hot/warm/cold actuation latency. Covers the model-agnostic recipe (any open vLLM model, one model or a list), the gotchas that produce silent zero-iteration runs, and the FMA-specific --set knobs. Not for throughput benchmarks (vllm-benchmark / guidellm / inference-perf).",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "fma",
+        "fast-model-actuation",
+        "benchmark",
+        "actuation-latency",
+        "vllm"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/run-fma-benchmark",
       "author": {
         "name": "llm-d",
         "url": "https://github.com/llm-d-incubation"
