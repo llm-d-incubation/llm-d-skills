@@ -56,6 +56,11 @@ Applies to llm-d v1.0 and later deployments driven by `guide.yaml` (see the main
 - **Cause**: a release named `${GUIDE_NAME}` already exists in the namespace (`helm list -n ${NAMESPACE}`).
 - **Action**: modify that release (`helm upgrade` with the same values files plus overrides), use another namespace, or remove it with `teardown-llm-d`.
 
+**EPP pod `Pending` with `Insufficient cpu` or `Insufficient memory`:**
+- **Cause**: `recipes/router/base.values.yaml` requests 4 CPU and 8Gi for the EPP container and the same for the Envoy sidecar, so the pod needs 8 CPU on one node; small CPU node pools often cannot host it while accelerator nodes are tainted.
+- **Diagnosis**: `kubectl describe pod <epp-pod> -n ${NAMESPACE} | sed -n '/Events/,$p'`; `kubectl describe nodes | grep -A6 'Allocated resources'`.
+- **Action**: a custom router values file (Step 4.4) with `router.epp.tolerations` for the accelerator taint (for example `key: google.com/tpu, operator: Exists, effect: NoSchedule`; the pod requests no accelerator), or lower `router.epp.resources` and `router.proxy.resources` to what the CPU nodes can hold.
+
 **EPP pod in `CrashLoopBackOff`:**
 - **Diagnosis**: find the router pod with `kubectl get pods -n ${NAMESPACE} | grep -- -epp`, then `kubectl logs <pod> -n ${NAMESPACE} -c epp --previous` (list container names with `-o jsonpath='{.spec.containers[*].name}'` if `epp` does not match).
 - **Common causes**: an invalid `EndpointPickerConfig` in custom values (plugin names must exist in the pinned router image; `apiVersion: llm-d.ai/v1`), or a `pluginsConfigFile` name that does not match a key under `pluginsCustomConfig`.
@@ -92,6 +97,10 @@ Applies to llm-d v1.0 and later deployments driven by `guide.yaml` (see the main
 - **Diagnosis**: `kubectl get secret llm-d-hf-token -n ${NAMESPACE} -o jsonpath='{.data.HF_TOKEN}' | wc -c` (must be greater than 0); `kubectl logs <pod> -n ${NAMESPACE} -c modelserver --tail=50`.
 - **Action**: create the Secret (`prerequisites.secrets`), then delete the pods so the controller recreates them with the token mounted.
 
+**Pod evicted for ephemeral storage, or the download stalls, with the `gke-model-cache-hostpath` component (GKE GPU and TPU overlays):**
+- **Cause**: the component mounts the node's `/var/cache/huggingface`, which lives on the boot disk; a checkpoint larger than the free boot-disk space (check with `kubectl get --raw /api/v1/nodes/<node>/proxy/stats/summary | jq .node.fs`) fills the disk.
+- **Action**: a custom overlay (Step 4.4) that replaces the `huggingface-cache` volume with a generic ephemeral volume (`ephemeral.volumeClaimTemplate`) on a StorageClass sized for the model, keeping the volume name so the component's mount and `HF_HOME` stay valid; or larger boot disks from the cluster administrator.
+
 **`CrashLoopBackOff` of the `modelserver` container:**
 - **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} -c modelserver --previous`.
 - **Common causes**: wrong model name for the accelerator overlay, insufficient accelerator memory for the model and `--max-model-len`, an invalid engine flag introduced by a customization, a driver and CUDA mismatch (the images ship CUDA 12.9.1; driver 575.x recommended, see `docs/getting-started/accelerators.md`).
@@ -119,8 +128,13 @@ Applies to llm-d v1.0 and later deployments driven by `guide.yaml` (see the main
 - **Long-term action**: add a `nodeAffinity` with `kubernetes.io/hostname NotIn [<node>]` through a custom overlay (Step 4.4), redeploy, and report the node to the cluster administrator.
 
 **`DisaggregatedSet` rollout stalls with new pods `Pending`:**
-- **Cause**: the controller creates the new revision before draining the old one; on a fully allocated cluster the new pods cannot schedule.
-- **Action**: keep at least one decode replica worth of free accelerators before a template change, or scale `slices` down by one first (see `docs/operations/disaggregation/disaggregatedset.md`).
+- **Cause**: the controller creates the new revision before draining the old one; on a fully allocated cluster the new pods cannot schedule. The revision covers the whole set: a template change in one role (for example a prefill-only affinity patch) re-creates every role, so decode pods restart and recompile as well.
+- **Action**: keep at least one decode replica worth of free accelerators before a template change, or scale `slices` down by one first (see `docs/operations/disaggregation/disaggregatedset.md`). Batch role changes into one apply.
+
+**Pods evicted with `The node was low on resource: ephemeral-storage` although the pod itself uses little disk:**
+- **Cause**: the kubelet evicts when the node's free boot-disk space drops under its threshold (10% by default), whatever filled it; nodes whose `/var/cache/huggingface` hostPath already holds other tenants' checkpoints evict every new pod. The evicted pods remain as `Failed` objects and the controller keeps creating replacements on the same node.
+- **Diagnosis**: `kubectl get --raw /api/v1/nodes/<node>/proxy/stats/summary | jq .node.fs`; `kubectl get node <node> -o jsonpath='{.status.conditions[?(@.type=="DiskPressure")]}'`.
+- **Action**: node anti-affinity (`kubernetes.io/hostname NotIn [<nodes>]`) through a custom overlay (Step 4.4) and a report to the cluster administrator; do not clean node disks from the skill (Rule 2).
 
 **Decode pods `Running` but not `Ready` in prefill/decode guides:**
 - **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} -c routing-proxy` and `-c modelserver`.

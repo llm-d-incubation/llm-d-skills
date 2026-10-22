@@ -24,6 +24,12 @@
       "prompt": "Put llm-d behind our existing GKE Gateway named llm-d-inference-gateway in namespace inference.",
       "expected_output": "Selects gateway mode, maps the gke-l7-* GatewayClass to provider.name=gke, emits deploy.gateway instead of deploy.standalone, verifies Gateway PROGRAMMED=True and HTTPRoute ACCEPTED=True, and warns that provider.name=none would produce 503 responses on GKE.",
       "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "We have a GKE cluster with TPU7x 2x2x1 nodes. Deploy optimized-baseline there, but serve Qwen/Qwen3-32B instead of the model the guide ships for TPU v7, and keep the EPP off our small CPU node pool.",
+      "expected_output": "Maps google.com/tpu plus the gke-tpu-accelerator=tpu7x label to ACCELERATOR_TYPE=tpu/v7 with INFRA_PROVIDER=gke, selects deploy.modelserver.standard explicitly (the option(manual) member), and creates deployments/<name>/kustomization.yaml whose resources: entry is a relative path to the upstream tpu/v7 gke overlay. The patch replaces the engine args for the dense model (tensor parallelism over the 8 devices of the host, following the guide's Qwen3-32B TPU reference overlay and docs/infrastructure/providers/gke/tpu/README.md), removes model-specific env entries with $patch: delete, and corrects the llm-d.ai/model label while keeping llm-d.ai/guide. Layers a custom router values file with router.epp.tolerations for the TPU taint and plugin parameters appropriate for the new model instead of the guide's tpu-v7.values.yaml numbers. Records both files in deployments/deploy-YYYYMMDD.sh and never edits the llm-d checkout.",
+      "files": []
     }
   ]
 }
