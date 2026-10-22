@@ -1,531 +1,171 @@
 # Troubleshooting Guidance
 
-## Deployment Issues
+Applies to llm-d v1.0 and later deployments driven by `guide.yaml` (see the main workflow). Container names used below: `modelserver` (the engine container in every model server pod) and `routing-proxy` (the sidecar on decode pods of disaggregated guides).
 
-### Repository and Guide Issues
+## Tooling and Repository Issues
 
-**llm-d repository structure changed:**
-- **Problem**: Guides moved from `examples/` to `guides/` directory
-- **Solution**: Check guide index at `${LLMD_PATH}/guides/README.md` or `${LLMD_PATH}/README.md` for current structure
-- **Note**: Old deployment scripts referencing `examples/` will fail
+**`scripts/guide.py` or `docs/well-lit-paths/guides.yaml` not found:**
+- **Cause**: the checkout predates llm-d v1.0 (before 2026-08) or is not an llm-d clone.
+- **Action**: `git -C ${LLMD_PATH} fetch && git -C ${LLMD_PATH} checkout release-1.0`, or ask the user for the right path.
 
-**Guide not found or path incorrect:**
-- **Problem**: Guide directory structure or naming changed between versions
-- **Solution**: List available guides: `ls ${LLMD_PATH}/guides/`
-- **Solution**: Read guide index: `cat ${LLMD_PATH}/guides/README.md`
-- **Solution**: Find guide index: `cat ${LLMD_PATH}/README.md`
+**`emit` fails with `--var names not declared in env.static` or `not in declared values`:**
+- **Cause**: a variable name or value outside the guide's vocabulary (for example `ACCELERATOR_TYPE=h100`).
+- **Action**: re-run `scripts/list-guide-steps.py ${GUIDE_DIR}` and use the listed names and values. The overlay tree is laid out by accelerator family, not by GPU model: all NVIDIA GPUs use `gpu`.
 
-**Helm chart registry authentication issues:**
-- **Problem**: `docker-credential-secretservice: error while loading shared libraries: libsecret-1.so.0`
-- **Solution**: Install missing library: `sudo apt-get install libsecret-1-0` (Ubuntu/Debian)
-- **Alternative**: Use `helm pull` to download chart locally first
+**`error: <guide> does not support MODEL_SERVER=... on ACCELERATOR_TYPE=...` while sourcing `guides/env.sh`:**
+- **Cause**: no overlay exists at `modelserver/<ACCELERATOR_TYPE>/<MODEL_SERVER>/`. The guard in `env.sh` lists the engines available for the accelerator.
+- **Action**: choose a pairing from the support matrix.
 
-### Configuration Issues
+**Kustomize overlay path not found:**
+- **Cause**: the leaf `INFRA_PROVIDER` level is missing or wrong. The layout is `modelserver/<ACCELERATOR_TYPE>/<MODEL_SERVER>/<INFRA_PROVIDER>/` (`base` on plain Kubernetes, `gke` on GKE, further values per guide).
+- **Action**: `ls ${GUIDE_DIR}/modelserver/${ACCELERATOR_TYPE}/${MODEL_SERVER}/` and pick an existing leaf; verify with `kubectl kustomize <dir> | head`.
 
-**Helmfile template error (missing config files):**
-- Copy gateway config to workspace: `values/istio-config.yaml`
-- Update helmfile to reference local copy
+**`emit` prints `# (no steps after skip_in/when filtering)` for a section:**
+- **Cause**: every step of the section is gated by a `when:` filter that the current variables do not satisfy (for example `deploy.monitoring_values` with `MONITORING=false`).
+- **Action**: expected for optional sections. For a mandatory section, compare the variables with the `when:` filters shown by `list-guide-steps.py`.
 
-**Helmfile syntax error ("Add the .gotmpl file extension"):**
-- Rename: `mv helmfile.yaml helmfile.yaml.gotmpl`
+**Helm OCI chart pull fails (`docker-credential-*` or `unauthorized`):**
+- **Action**: `helm registry logout ghcr.io` (the charts are public); on Debian or Ubuntu install `libsecret-1-0` if the credential helper is missing; or `helm pull ${ROUTER_STANDALONE_CHART} --version ${ROUTER_CHART_VERSION}` and install from the local archive.
 
-**Wrong chart version or incompatible versions:**
-- **Problem**: Chart version mismatch with guide requirements
-- **Solution**: Check guide's README for required chart versions
-- **Solution**: Use exact version from guide: `--version X.Y.Z`
+## Prerequisite Issues
 
-**Missing or incorrect values files:**
-- **Problem**: Guide references values files that don't exist or have moved
-- **Solution**: Check guide directory structure: `ls -R ${LLMD_PATH}/guides/<guide-name>/`
-- **Solution**: Verify values file paths in helmfile or helm commands
-- **Solution**: Use layered values approach: base values + guide-specific overrides
+**`no matches for kind "InferencePool" in version "inference.networking.k8s.io/v1"`:**
+- **Cause**: the Gateway API Inference Extension CRDs are not installed.
+- **Action**: cluster-scoped prerequisite (Rule 2). Command: `${GUIDE_PY} emit ${GUIDE_DIR} env prerequisites.gaie`. On GKE `1.34.0-gke.1626000` or later with the Gateway API enabled, GKE manages these CRDs; check `kubectl api-resources --api-group=inference.networking.k8s.io` before applying.
 
-**CRD conflict:**
-- Delete and retry: `kubectl delete crd variantautoscalings.llmd.ai`
+**`no matches for kind "DisaggregatedSet"` or the set is created but no pods appear:**
+- **Cause**: the LeaderWorkerSet controller is missing, older than the version pinned in `guides/env.sh` (`LWS_VERSION`), or installed without `enableDisaggregatedSet=true`.
+- **Diagnosis**: `kubectl get crd disaggregatedsets.disaggregatedset.x-k8s.io`; `kubectl get pods -n lws-system`; `helm list -n lws-system`.
+- **Action**: cluster-scoped prerequisite (Rule 2). Command: `${GUIDE_PY} emit ${GUIDE_DIR} env prerequisites.lws`. For an existing older install, apply the new chart's CRDs first; `helm upgrade` does not update CRDs (see `docs/infrastructure/model-server-orchestration.md`).
 
-**HPA minReplicas validation error:**
-- Set `minReplicas: 1` (Kubernetes requires ≥1)
-- Use WVA's `scaleToZero: true` for scale-to-zero
+**DRA overlays (`ResourceClaimTemplate`) rejected with `no matches for kind` or `unknown field`:**
+- **Cause**: the overlay uses `resource.k8s.io/v1`, which needs Kubernetes 1.34 or newer and the accelerator's DRA driver.
+- **Action**: `kubectl version`; `kubectl get deviceclasses.resource.k8s.io`. Upgrade the cluster or use a device-plugin based overlay.
 
-**Missing llm-d-monitoring namespace:**
-- Create: `kubectl create namespace llm-d-monitoring`
-
-### Deployment Command Issues
-
-**kubectl/oc command syntax errors:**
-- **Problem**: Using `--all` flag with label selectors
-- **Error**: `error: setting 'all' parameter but found a non empty selector`
-- **Solution**: Remove `--all` flag when using `-l` selector
-- **Correct**: `kubectl delete pods -l llm-d.ai/role=decode -n ${NAMESPACE}`
-- **Incorrect**: `kubectl delete pods -l llm-d.ai/role=decode --all -n ${NAMESPACE}`
-
-**Kustomize build failures:**
-- **Problem**: Kustomize overlay path incorrect or missing
-- **Solution**: Verify overlay exists: `ls ${LLMD_PATH}/guides/<guide>/modelserver/<accelerator>/<server>/`
-- **Solution**: Check kustomization.yaml exists in overlay directory
-- **Solution**: Use full path: `kustomize build ${LLMD_PATH}/guides/<guide>/modelserver/<accelerator>/<server>/`
-
-**Modelserver overlay path 404 / not found (`h100/`, `h200/`, `a100/`, etc.):**
-- **Problem**: A path like `.../modelserver/h100/vllm/` (or `h200/`, `a100/`, `b200/`) returns 404 or "no such directory"
-- **Root Cause**: `modelserver/` is laid out by accelerator **FAMILY**, not by GPU model. All NVIDIA GPUs (H100, H200, A100, B200) share the same `gpu/vllm/` overlay. There is no per-GPU-model granularity.
-- **Solution**: Use the family directory for your accelerator:
-  - NVIDIA GPU → `gpu/vllm/` (with `base/` for vanilla clusters or `gke/` on GKE)
-  - AMD GPU → `amd/vllm/`
-  - Intel XPU → `xpu/vllm/`; Intel Gaudi (HPU) → `hpu/vllm/`
-  - Google TPU → `tpu-v6/vllm/` or `tpu-v7/vllm/`; CPU-only → `cpu/vllm/`
-- **Verify**: `ls ${LLMD_PATH}/guides/<guide>/modelserver/` (or browse https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline/modelserver) to see the published families
-
-**Namespace not set or incorrect:**
-- **Problem**: Commands fail because namespace not specified
-- **Solution**: Always export NAMESPACE: `export NAMESPACE=your-namespace`
-- **Solution**: Add `-n ${NAMESPACE}` to all kubectl/oc commands
-- **Solution**: Verify current namespace: `kubectl config view --minify | grep namespace`
+**`HF_TOKEN: unbound variable` while running `prerequisites.secrets`:**
+- **Cause**: the emitted script runs with `set -u` and the token is not exported.
+- **Action**: `export HF_TOKEN=...` in the shell that runs the script. Never write the token into the script.
 
 **RBAC denied during apply:**
-- **Problem**: `kubectl apply`/`helm install` returns `forbidden: User cannot create resource ... in API group ...`
-- **Diagnosis**: `kubectl auth can-i <verb> <resource> -n ${NAMESPACE}` confirms the denial
-- **Solution**: Ask the cluster admin to grant the specific role needed; state the exact RBAC rule in plain language; do not attempt to escalate privileges
+- **Diagnosis**: `kubectl auth can-i <verb> <resource> -n ${NAMESPACE}`.
+- **Action**: ask the cluster administrator for the specific role; state the exact rule needed; do not attempt to escalate privileges.
 
-## Runtime Issues
+## Router (Helm Release) Issues
 
-### Pod Scheduling and Startup Issues
+**`cannot re-use a name that is still in use`:**
+- **Cause**: a release named `${GUIDE_NAME}` already exists in the namespace (`helm list -n ${NAMESPACE}`).
+- **Action**: modify that release (`helm upgrade` with the same values files plus overrides), use another namespace, or remove it with `teardown-llm-d`.
 
-**Catastrophic pod explosion - hundreds of pods created:**
-- **Problem**: Deployment creates 100+ pods instead of requested replica count (e.g., 130+ pods when only 3-4 replicas requested)
-- **Root Cause**: Missing or incorrect `replicas` field in kustomization.yaml when using kustomize-based deployments
-- **Symptoms**:
-  - Massive number of pods created rapidly
-  - Cluster resources exhausted
-  - Most pods stuck in Pending, ContainerCreating, or CrashLoopBackOff
-  - Pods fail to get GPU resources because cluster runs out
-  - Kubernetes keeps creating new pods trying to meet replica requirements
-- **Diagnosis**:
-  ```bash
-  # Check actual pod count vs expected
-  kubectl get pods -n ${NAMESPACE} -l llm-d.ai/role=decode --no-headers | wc -l
-  
-  # Check deployment replica setting
-  kubectl get deployment <deployment-name> -n ${NAMESPACE} -o jsonpath='{.spec.replicas}'
-  
-  # Check kustomization.yaml for replicas field
-  cat kustomization.yaml | grep -A 3 "replicas:"
-  ```
-- **Solution**: Add explicit replica count in kustomization.yaml:
-  ```yaml
-  replicas:
-    - name: decode  # or your deployment name
-      count: 3      # your desired replica count
-  ```
-- **Emergency cleanup** if already deployed:
-  ```bash
-  # Delete the deployment to stop pod creation
-  kubectl delete deployment <deployment-name> -n ${NAMESPACE}
-  
-  # Force delete stuck pods (if needed)
-  kubectl delete pods -l llm-d.ai/role=decode -n ${NAMESPACE} --force --grace-period=0
-  
-  # Fix kustomization.yaml, then redeploy
-  kubectl apply -k <path-to-kustomization>
-  ```
-- **Prevention**: Always verify kustomization.yaml includes explicit replica count before deploying
-- **Note**: This is specific to kustomize-based deployments. Helm-based deployments specify replicas in values.yaml
+**EPP pod `Pending` with `Insufficient cpu` or `Insufficient memory`:**
+- **Cause**: `recipes/router/base.values.yaml` requests 4 CPU and 8Gi for the EPP container and the same for the Envoy sidecar, so the pod needs 8 CPU on one node; small CPU node pools often cannot host it while accelerator nodes are tainted.
+- **Diagnosis**: `kubectl describe pod <epp-pod> -n ${NAMESPACE} | sed -n '/Events/,$p'`; `kubectl describe nodes | grep -A6 'Allocated resources'`.
+- **Action**: a custom router values file (Step 4.4) with `router.epp.tolerations` for the accelerator taint (for example `key: google.com/tpu, operator: Exists, effect: NoSchedule`; the pod requests no accelerator), or lower `router.epp.resources` and `router.proxy.resources` to what the CPU nodes can hold.
 
-**Pods in CrashLoopBackOff:**
-- **Problem**: Pods repeatedly crashing and restarting
-- **Diagnosis**: Check logs: `kubectl logs <pod> -n ${NAMESPACE} --previous`
-- **Common causes**:
-  - vLLM configuration errors (wrong model path, invalid parameters)
-  - Insufficient GPU memory for model
-  - Missing or invalid HuggingFace token
-  - Network connectivity issues to model registry
-  - Container image pull failures
-  - GPU allocation failures (see pod explosion issue above)
-- **Solution**: Review pod logs for specific error messages
-- **Solution**: Verify resource requests match available resources
-- **Solution**: Check HF token secret exists and is valid
-- **Solution**: If many pods in CrashLoopBackOff, check for pod explosion issue (missing replicas in kustomization.yaml)
+**EPP pod in `CrashLoopBackOff`:**
+- **Diagnosis**: find the router pod with `kubectl get pods -n ${NAMESPACE} | grep -- -epp`, then `kubectl logs <pod> -n ${NAMESPACE} -c epp --previous` (list container names with `-o jsonpath='{.spec.containers[*].name}'` if `epp` does not match).
+- **Common causes**: an invalid `EndpointPickerConfig` in custom values (plugin names must exist in the pinned router image; `apiVersion: llm-d.ai/v1`), or a `pluginsConfigFile` name that does not match a key under `pluginsCustomConfig`.
+- **Action**: re-install with the guide's values only; introduce custom router values one at a time.
 
-**vLLM crashes on OpenShift with `KeyError` / `getpwuid` error (vLLM v0.22+):**
+**Router runs but never picks a pod (`no endpoints`, 503 from the EPP service):**
+- **Cause**: `router.modelServers.matchLabels` (`llm-d.ai/guide: <guide>` in the guide's values) does not match the model server pods, typically after a customization changed or dropped labels, or the pods are not `Ready`.
+- **Diagnosis**: `kubectl get inferencepool -n ${NAMESPACE} -o yaml`; `kubectl get pods -n ${NAMESPACE} -l llm-d.ai/guide=${GUIDE_NAME}`.
 
-- **Problem**: vLLM pods crash on startup with a traceback involving `getpass.getuser()` / `pwd.getpwuid(os.getuid())`. OpenShift assigns arbitrary UIDs not in `/etc/passwd`, causing a `KeyError`.
-- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} | grep -i "getpwuid\|KeyError"`
-- **Solution**: Add these env vars and an emptyDir volume to the vLLM container spec:
-  ```yaml
-  env:
-    - name: USER
-      value: vllm
-    - name: HOME
-      value: /.cache
-    - name: TORCHINDUCTOR_CACHE_DIR
-      value: /.cache/torchinductor
-  volumeMounts:
-    - mountPath: /.cache
-      name: torch-compile-cache
-  volumes:
-    - name: torch-compile-cache
-      emptyDir: {}
-  ```
-  `USER=vllm` short-circuits `getpass.getuser()` before it hits `/etc/passwd`. `HOME` and `TORCHINDUCTOR_CACHE_DIR` redirect cache writes to the writable emptyDir.
+**Requests return 503 in gateway mode on GKE:**
+- **Cause**: the router chart was installed with `provider.name=none`, so no `HealthCheckPolicy` exists and the load balancer marks the backends unhealthy.
+- **Action**: re-install with `--set provider.name=gke`. On Istio the equivalent setting renders a `DestinationRule`.
 
-**vLLM crashes on TP=1 with large models: "KV cache memory insufficient" (ValueError):**
+**Gateway not programmed or HTTPRoute not accepted (gateway mode):**
+- **Diagnosis**: `kubectl describe gateway llm-d-inference-gateway -n ${NAMESPACE}`; `kubectl describe httproute -n ${NAMESPACE}`; the gateway controller logs.
+- **Common causes**: no Gateway provider installed, a GatewayClass name that does not match the provider, or the HTTPRoute `parentRefs` naming a Gateway in another namespace.
 
-- **Problem**: vLLM pod crashes during engine init with `ValueError: ... KV cache is needed, which is larger than the available KV cache memory`. On TP=1, a 60B+ model leaves only ~2-3 GiB for KV cache — too little for the model's default max seq len (e.g. 131072 tokens).
-- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} --previous | grep -E "KV cache|ValueError|Available"`
-- **Solution**: Cap `--max-model-len` to your actual workload needs (e.g. 8192 for ISL≤5000 + OSL≤500):
-  ```yaml
-  args:
-    - "--max-model-len=8192"
-    - "--gpu-memory-utilization=0.90"
-  ```
-- **Note**: Affects all TP=1 pods (including prefill in P/D disaggregation). TP=2+ shards the model across GPUs and typically has enough headroom.
+**Prefix-cache affinity does not spread load on a different model or accelerator:**
+- **Cause**: `peakPrefillThroughput` of `prefix-cache-affinity-filter` is calibrated for the guide's reference setup (Qwen3-32B on H100, TP=2).
+- **Action**: measure with `guides/recipes/router/calibration/` and set the value in a custom router values file (Step 4.4). A performance tuning concern, not a deployment failure.
 
-**Pod OOMKilled during model loading:**
-- **Problem**: Pod exits with `OOMKilled`, often during initial model download/loading
-- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows `Reason: OOMKilled`; check `resources.limits.memory`
-- **Solution**: Increase the model server container's `resources.limits.memory` (e.g. ~80Gi is typical for a 32B model on H100)
+## Model Server Issues
 
-**ImagePullBackOff:**
-- **Problem**: Pod stuck in `ImagePullBackOff`
-- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows the pull error — typically `unauthorized`, `not found`, or `manifest unknown`
-- **Solution**: Verify the image tag exists; for a private registry, ensure `imagePullSecrets` is set on the pod spec
+**Pods `Pending`:**
+- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE} | sed -n '/Events/,$p'`.
+- **Checks**: accelerator capacity (`kubectl describe nodes | grep -A3 -E 'nvidia.com/gpu|amd.com/gpu|google.com/tpu'`), node selectors and affinities in the overlay (GKE overlays select machine families), taints and tolerations, `ResourceClaim` allocation for DRA overlays (`kubectl get resourceclaims -n ${NAMESPACE}`), resource quotas, PVC binding for overlays that mount one.
 
-**Pods pending:**
-- Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
-- **Additional checks**:
-  - Node selectors: `kubectl get pod <pod> -n ${NAMESPACE} -o yaml | grep -A 5 nodeSelector`
-  - Taints and tolerations: `kubectl describe nodes | grep -A 5 Taints`
-  - PVC binding: `kubectl get pvc -n ${NAMESPACE}`
-  - Resource quotas: `kubectl describe resourcequota -n ${NAMESPACE}`
+**`ImagePullBackOff`:**
+- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows `unauthorized`, `not found`, or `manifest unknown`.
+- **Checks**: the image tag comes from `guides/recipes/modelserver/components/images/<engine>/<release|nightly>`; nightly tags move and may be absent from mirrors. For a private registry add `imagePullSecrets` through a custom overlay.
 
-**Pods in UnexpectedAdmissionError:**
-- **Problem**: Admission webhook or policy blocking pod creation
-- **Solution**: Check admission webhook logs
-- **Solution**: Verify pod security policies/standards
-- **Solution**: Check for resource quota violations
+**Pods stall with `unauthenticated requests to HF Hub` as the last log line:**
+- **Cause**: the `llm-d-hf-token` Secret is missing or holds an empty `HF_TOKEN`; HuggingFace rate-limits anonymous downloads so a 32B model can take hours.
+- **Diagnosis**: `kubectl get secret llm-d-hf-token -n ${NAMESPACE} -o jsonpath='{.data.HF_TOKEN}' | wc -c` (must be greater than 0); `kubectl logs <pod> -n ${NAMESPACE} -c modelserver --tail=50`.
+- **Action**: create the Secret (`prerequisites.secrets`), then delete the pods so the controller recreates them with the token mounted.
 
-**Excessive pod creation / GPU hardware failures:**
-- **Problem**: Deployment creates hundreds of pods (e.g., 450+) instead of requested replicas, with pods failing due to GPU hardware errors
-- **Symptoms**:
-  - Massive pod creation (100s of pods when only 1-3 replicas requested)
-  - Pods stuck in `ContainerStatusUnknown`, `Pending`, or `UnexpectedAdmissionError`
-  - GPU NVLink errors in pod events: `error getting NVLink for devices: failed to get nvlink state: GPU is lost`
-  - Continuous pod creation/failure loop exhausting cluster resources
-- **Root Cause**: GPU hardware failure on specific cluster nodes (e.g., NVLink failures, GPU device errors)
-- **Immediate Fix** (stop the pod creation loop):
-  ```bash
-  # 1. Delete the deployment to stop creating new pods
-  kubectl delete deployment <deployment-name> -n ${NAMESPACE}
-  
-  # 2. Force delete all failing pods
-  kubectl delete pods -n ${NAMESPACE} -l llm-d.ai/model=<model-name> --grace-period=0 --force
-  
-  # 3. Scale deployment to minimal replicas before redeploying
-  # Edit your deployment configuration to set replicas: 1
-  ```
-- **Diagnosis**:
-  ```bash
-  # Check pod events for GPU errors
-  kubectl describe pod <pod-name> -n ${NAMESPACE} | grep -A 10 Events
-  
-  # Identify problematic nodes
-  kubectl get pods -n ${NAMESPACE} -o wide | grep <failing-pod-prefix>
-  
-  # Check node GPU status
-  kubectl describe node <node-name> | grep -A 10 "nvidia.com/gpu"
-  ```
-- **Long-term Solution** (avoid problematic nodes):
-  Add node anti-affinity to your deployment configuration to avoid scheduling on nodes with GPU hardware issues:
-  ```yaml
-  # Add to your patch file or deployment spec under spec.template.spec:
-  affinity:
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-        - matchExpressions:
-          - key: kubernetes.io/hostname
-            operator: NotIn
-            values:
-            - <problematic-node-name>  # e.g., pokprod-b93r38s3
-  ```
-- **Prevention**:
-  - Monitor pod events during initial deployment
-  - Report GPU hardware failures to cluster administrators
-  - Maintain a list of known problematic nodes in your deployment documentation
-- **Note**: This requires cluster administrator intervention to repair or replace faulty GPU hardware
+**Pod evicted for ephemeral storage, or the download stalls, with the `gke-model-cache-hostpath` component (GKE GPU and TPU overlays):**
+- **Cause**: the component mounts the node's `/var/cache/huggingface`, which lives on the boot disk; a checkpoint larger than the free boot-disk space (check with `kubectl get --raw /api/v1/nodes/<node>/proxy/stats/summary | jq .node.fs`) fills the disk.
+- **Action**: a custom overlay (Step 4.4) that replaces the `huggingface-cache` volume with a generic ephemeral volume (`ephemeral.volumeClaimTemplate`) on a StorageClass sized for the model, keeping the volume name so the component's mount and `HF_HOME` stay valid; or larger boot disks from the cluster administrator.
 
-**Pods crash:**
-- Check logs: `kubectl logs <pod> -c vllm -n ${NAMESPACE}`
-- Check previous logs: `kubectl logs <pod> -c vllm -n ${NAMESPACE} --previous`
-- Verify HF token and model name
-- **Additional diagnostics**:
-  - Check events: `kubectl describe pod <pod> -n ${NAMESPACE}`
-  - Verify container image: `kubectl get pod <pod> -n ${NAMESPACE} -o jsonpath='{.spec.containers[*].image}'`
-  - Check resource limits: `kubectl get pod <pod> -n ${NAMESPACE} -o yaml | grep -A 10 resources`
+**`CrashLoopBackOff` of the `modelserver` container:**
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} -c modelserver --previous`.
+- **Common causes**: wrong model name for the accelerator overlay, insufficient accelerator memory for the model and `--max-model-len`, an invalid engine flag introduced by a customization, a driver and CUDA mismatch (the images ship CUDA 12.9.1; driver 575.x recommended, see `docs/getting-started/accelerators.md`).
+
+**`ValueError: ... KV cache is needed, which is larger than the available KV cache memory` (TP=1 with large models):**
+- **Action**: cap `--max-model-len` to the workload (for example `8192`) and keep `--gpu-memory-utilization` at or below `0.90` through a custom patch. Affects every TP=1 pod, including prefill in prefill/decode disaggregation.
+
+**vLLM crashes on OpenShift with `KeyError` in `getpwuid`:**
+- **Cause**: OpenShift assigns arbitrary UIDs absent from `/etc/passwd`.
+- **Action**: set `USER=vllm`, `HOME=/.cache`, `TORCHINDUCTOR_CACHE_DIR=/.cache/torchinductor` on the `modelserver` container and mount an `emptyDir` at `/.cache` through a custom patch. The upstream `base` overlays already mount `/.cache` and `/.triton`.
+
+**Pod `OOMKilled` during model loading:**
+- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows `Reason: OOMKilled`.
+- **Action**: raise the `modelserver` container's `resources.limits.memory` in a custom patch (about 80Gi is typical for a 32B model).
 
 **Model loading slow:**
-- Normal for large models (5-10 min for 100B+)
-- Monitor: `kubectl logs <pod> -c vllm -f -n ${NAMESPACE}`
-- **Expected behavior**: Model download and loading takes time
-- **When to worry**: If stuck for >15 minutes with no progress
-- **Check**: Network bandwidth to HuggingFace, disk I/O performance
+- Normal: 5 to 10 minutes for 100B+ models with a warm registry; up to 30 minutes with first-time image pulls and compilation.
+- Monitor: `kubectl logs <pod> -n ${NAMESPACE} -c modelserver -f`.
+- Investigate when there is no log progress for more than 15 minutes: HF token (above), network egress, node disk pressure.
 
-**Pods stuck at startup with "unauthenticated requests to HF Hub":**
-- **Problem**: All decoder pods stall during model download with "unauthenticated requests to HF Hub" as the last log line, remaining not ready for extended periods (30+ minutes)
-- **Root Cause**: Missing `HF_TOKEN` environment variable in kustomize patches - pods attempt to download models unauthenticated and get rate-limited by HuggingFace Hub
-- **Symptoms**:
-  - Pods stuck in `ContainerCreating` or `Running` but not `Ready` for 30+ minutes
-  - Last log line shows: "unauthenticated requests to HF Hub"
-  - Model download makes no progress or is extremely slow (3.5+ hours for large models)
-  - Only affects pods on nodes without cached model weights
-  - Multiple pods (e.g., 7/8) stalled at the same point
-- **Diagnosis**:
-  ```bash
-  # Check pod status and age
-  kubectl get pods -n ${NAMESPACE} -l llm-d.ai/role=decode
-  
-  # Check recent logs for authentication issues
-  kubectl logs <pod-name> -n ${NAMESPACE} --tail=50 | grep -i "unauthenticated\|HF\|token"
-  
-  # Verify HF_TOKEN is set in pod spec
-  kubectl get pod <pod-name> -n ${NAMESPACE} -o yaml | grep -A 5 "HF_TOKEN"
-  ```
-- **Solution**: Add the `HF_TOKEN` environment variable to your kustomize patch file:
-  ```yaml
-  apiVersion: apps/v1
-  kind: Deployment
-  metadata:
-    name: decode
-  spec:
-    template:
-      spec:
-        containers:
-          - name: modelserver
-            env:
-              - name: HF_TOKEN
-                valueFrom:
-                  secretKeyRef:
-                    name: llm-d-hf-token
-                    key: HF_TOKEN
-  ```
-- **Fix for running deployment**:
-  ```bash
-  # 1. Update your kustomize patch to include HF_TOKEN
-  # 2. Apply the updated configuration
-  kustomize build <path-to-overlay> | kubectl apply -n ${NAMESPACE} -f -
-  
-  # 3. Trigger rolling update by deleting pods (they'll restart with new config)
-  kubectl delete pods -l llm-d.ai/role=decode -n ${NAMESPACE}
-  
-  # 4. Monitor progress - pods should now authenticate and download faster
-  kubectl get pods -n ${NAMESPACE} -l llm-d.ai/role=decode -w
-  ```
-- **Prevention**:
-  - Always verify `HF_TOKEN` is present in patch files before deployment
-  - The HPU patch (`guides/optimized-baseline/modelserver/hpu/vllm/patch-vllm.yaml`) includes this correctly (lines 23-27)
-  - The GPU base patch (`guides/optimized-baseline/modelserver/gpu/vllm/base/patch-vllm.yaml`) is missing this - add it manually
-  - Ensure the `llm-d-hf-token` secret exists in your namespace before deploying
-- **Note**: Without authentication, HuggingFace Hub severely rate-limits downloads, making large model downloads (e.g., Qwen3-32B) take 3.5+ hours instead of minutes. With proper authentication, downloads complete in 5-15 minutes depending on model size and network speed.
+**Hundreds of pods created, events show `GPU is lost` or NVLink errors:**
+- **Cause**: a node with failed accelerator hardware; the controller keeps replacing failed pods.
+- **Immediate action**: remove the workload so the controller stops replacing pods: `kubectl delete -n ${NAMESPACE} -k ${GUIDE_DIR}/modelserver/${ACCELERATOR_TYPE}/${MODEL_SERVER}/${INFRA_PROVIDER}` (or the custom overlay that was applied), then `kubectl delete pods -n ${NAMESPACE} -l llm-d.ai/guide=${GUIDE_NAME} --grace-period=0 --force` for pods stuck in termination.
+- **Diagnosis**: `kubectl get pods -n ${NAMESPACE} -o wide` to find the node; `kubectl describe node <node> | grep -A10 -E 'nvidia.com/gpu|Conditions'`.
+- **Long-term action**: add a `nodeAffinity` with `kubernetes.io/hostname NotIn [<node>]` through a custom overlay (Step 4.4), redeploy, and report the node to the cluster administrator.
 
+**`DisaggregatedSet` rollout stalls with new pods `Pending`:**
+- **Cause**: the controller creates the new revision before draining the old one; on a fully allocated cluster the new pods cannot schedule. The revision covers the whole set: a template change in one role (for example a prefill-only affinity patch) re-creates every role, so decode pods restart and recompile as well.
+- **Action**: keep at least one decode replica worth of free accelerators before a template change, or scale `slices` down by one first (see `docs/operations/disaggregation/disaggregatedset.md`). Batch role changes into one apply.
 
-### Networking and Routing Issues
+**Pods evicted with `The node was low on resource: ephemeral-storage` although the pod itself uses little disk:**
+- **Cause**: the kubelet evicts when the node's free boot-disk space drops under its threshold (10% by default), whatever filled it; nodes whose `/var/cache/huggingface` hostPath already holds other tenants' checkpoints evict every new pod. The evicted pods remain as `Failed` objects and the controller keeps creating replacements on the same node.
+- **Diagnosis**: `kubectl get --raw /api/v1/nodes/<node>/proxy/stats/summary | jq .node.fs`; `kubectl get node <node> -o jsonpath='{.status.conditions[?(@.type=="DiskPressure")]}'`.
+- **Action**: node anti-affinity (`kubernetes.io/hostname NotIn [<nodes>]`) through a custom overlay (Step 4.4) and a report to the cluster administrator; do not clean node disks from the skill (Rule 2).
 
-**Routing not working:**
-- Verify gateway programmed: `kubectl get gateway -n ${NAMESPACE}`
-- Check HTTPRoute accepted: `kubectl describe httproute -n ${NAMESPACE}`
-- **Additional checks**:
-  - Gateway status: `kubectl get gateway <gateway-name> -n ${NAMESPACE} -o yaml`
-  - HTTPRoute backend references: `kubectl get httproute <route-name> -n ${NAMESPACE} -o yaml`
-  - Service endpoints: `kubectl get endpoints -n ${NAMESPACE}`
-  - Gateway provider logs (Istio/Envoy/etc.)
+**Decode pods `Running` but not `Ready` in prefill/decode guides:**
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} -c routing-proxy` and `-c modelserver`.
+- **Common causes**: the NIXL side channel or RDMA transport is not reachable (`UCX_TLS`, missing `rdma/*` resources or DRA claims); see `docs/infrastructure/rdma/README.md` for the verification steps.
 
-**Cluster API server unreachable:**
-- **Problem**: `couldn't get current server API group list: Get "https://api...": connection refused`
-- **Cause**: Cluster connectivity issues, API server down, or network problems
-- **Solution**: Verify cluster access: `kubectl cluster-info`
-- **Solution**: Check kubeconfig: `kubectl config view`
-- **Solution**: Test API server: `curl -k https://<api-server>:6443/healthz`
-- **Note**: This is a cluster infrastructure issue, not an llm-d deployment issue
+## Networking Issues
 
-**Service not accessible:**
-- **Problem**: Cannot reach service via port-forward or ingress
-- **Solution**: Verify service exists: `kubectl get svc -n ${NAMESPACE}`
-- **Solution**: Check service endpoints: `kubectl get endpoints <service> -n ${NAMESPACE}`
-- **Solution**: Verify pods are ready: `kubectl get pods -n ${NAMESPACE}`
-- **Solution**: Test with port-forward: `kubectl port-forward svc/<service> 8080:80 -n ${NAMESPACE}`
+**`/v1/models` works but completions time out in standalone mode:**
+- **Diagnosis**: logs of the sidecar and EPP containers of the router pod (`kubectl get pods -n ${NAMESPACE} | grep -- -epp`); `kubectl get endpointslices -n ${NAMESPACE}`.
+- **Common causes**: model server pods not `Ready`, or the EPP service port mapping changed by custom values (the guides expose port 80 to container port 8081).
 
-### Resource and Performance Issues
+**Cluster API server unreachable (`connection refused` from kubectl):**
+- A cluster connectivity issue, not an llm-d issue. `kubectl cluster-info`; check the kubeconfig context.
 
-**Workload autoscaler CrashLoopBackOff:**
-- Known issue: `-watch-namespace` flag removed in newer versions
-- Core inference unaffected - model serving works normally
-- Workaround: Use HPA only or manual scaling
+## Checklists
 
-**Insufficient resources:**
-- **Problem**: Pods pending due to insufficient CPU/GPU/memory
-- **Solution**: Check node resources: `kubectl describe nodes`
-- **Solution**: Check resource requests: `kubectl get pod <pod> -n ${NAMESPACE} -o yaml | grep -A 10 resources`
-- **Solution**: Scale down replicas or adjust resource requests
-- **Solution**: Add more nodes to cluster
+Before deployment:
 
-**GPU not detected or allocated:**
-- **Problem**: vLLM cannot find GPU devices
-- **Solution**: Verify GPU resources on nodes: `kubectl describe nodes | grep -A 5 "nvidia.com/gpu"`
-- **Solution**: Check GPU device plugin: `kubectl get pods -n kube-system | grep nvidia`
-- **Solution**: Verify pod GPU requests: `kubectl get pod <pod> -n ${NAMESPACE} -o yaml | grep nvidia.com/gpu`
+1. `git -C ${LLMD_PATH} describe --tags --always` and `${GUIDE_PY} check ${GUIDE_DIR}` succeed.
+2. `NAMESPACE` exported; `HF_TOKEN` exported if the Secret is missing.
+3. GAIE CRDs present; LWS present for `DisaggregatedSet` overlays; Gateway provider present for gateway mode.
+4. `helm list -n ${NAMESPACE}` shows no release named after the guide.
 
-## Best Practices to Avoid Issues
+During deployment:
 
-### Pre-Deployment Checklist
+1. Execute one section per `emit` invocation; inspect each output.
+2. Do not edit files under `${LLMD_PATH}`; customizations live under `deployments/`.
+3. Keep `deployments/deploy-YYYYMMDD.sh` equal to what was executed.
 
-1. **Verify llm-d repository version**:
-   - Check current branch: `cd ${LLMD_PATH} && git branch --show-current`
-   - Verify guide exists: `ls ${LLMD_PATH}/guides/<guide-name>/`
-   - Read guide README: `cat ${LLMD_PATH}/guides/<guide-name>/README.md`
+After deployment:
 
-2. **Set required environment variables**:
-   ```bash
-   export LLMD_PATH=/path/to/llm-d
-   export NAMESPACE=your-namespace
-   ```
-
-3. **Verify prerequisites**:
-   - Namespace exists: `kubectl get namespace ${NAMESPACE}`
-   - HF token secret (if needed): `kubectl get secret llm-d-hf-token -n ${NAMESPACE}`
-   - Gateway provider (if using Gateway API mode): `kubectl get crd gateways.gateway.networking.k8s.io`
-   - Sufficient cluster resources: `kubectl describe nodes`
-
-4. **Clean up previous deployments**:
-   - Check existing resources: `kubectl get all -n ${NAMESPACE}`
-   - Remove old deployments if needed: `helm list -n ${NAMESPACE}`
-   - Delete conflicting resources before redeploying
-
-### During Deployment
-
-1. **Follow guide structure exactly**:
-   - Use paths from guide README
-   - Don't modify guide files directly
-   - Create custom overlays if customization needed
-
-2. **Verify each step**:
-   - Check command output for errors
-   - Verify resources created: `kubectl get <resource> -n ${NAMESPACE}`
-   - Monitor pod status: `kubectl get pods -n ${NAMESPACE} -w`
-
-3. **Save deployment commands**:
-   - Create deployment script with actual commands used
-   - Include environment variables and prerequisites
-   - Add validation steps at the end
-
-### Post-Deployment
-
-1. **Validate deployment**:
-   - All pods running: `kubectl get pods -n ${NAMESPACE}`
-   - Services have endpoints: `kubectl get endpoints -n ${NAMESPACE}`
-   - Gateway/HTTPRoute ready (if applicable)
-   - Test inference endpoint: `curl http://<endpoint>/v1/models`
-
-2. **Monitor for issues**:
-   - Watch pod logs: `kubectl logs -f <pod> -n ${NAMESPACE}`
-   - Check resource usage: `kubectl top pods -n ${NAMESPACE}`
-   - Monitor events: `kubectl get events -n ${NAMESPACE} --sort-by='.lastTimestamp'`
-
-3. **Document configuration**:
-   - Save deployment script
-   - Note any customizations made
-   - Record resource requirements and performance metrics
-
-## Configuration Optimization Issues
-
-### Missing Kustomization Patches in Optimized Baseline Guide
-
-**Issue**: The `optimized-baseline` guide is missing important volume mounts and environment variables that are present in other guides like `precise-prefix-cache-aware`, `pd-disaggregation`, and `tiered-prefix-cache`.
-
-**Missing Optimizations**:
-
-1. **Triton Cache Volume Mount**
-   - **Problem**: The `/.triton` directory is not writable under restricted SecurityContexts (e.g., OpenShift), causing Triton/Inductor cache failures
-   - **Symptom**: vLLM may fail to write compilation caches, leading to performance degradation or startup failures
-   - **Present in**: `precise-prefix-cache-aware`, `tiered-prefix-cache`, and other advanced guides
-   - **Missing from**: `optimized-baseline/modelserver/gpu/vllm/patch-vllm.yaml`
-
-2. **DO_NOT_TRACK Environment Variable**
-   - **Problem**: vLLM usage telemetry writes to `/.config` fail under restricted SecurityContexts (e.g., OpenShift)
-   - **Symptom**: Permission denied errors when vLLM attempts to write telemetry data
-   - **Present in**: `precise-prefix-cache-aware`, `pd-disaggregation/hpu`, and `optimized-baseline/hpu`
-   - **Missing from**: `optimized-baseline/modelserver/gpu/vllm/patch-vllm.yaml` and other GPU variants
-
-**Solution**: Add the missing configurations to your kustomization patch file. Create a custom patch or modify your deployment configuration:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: decode
-spec:
-  template:
-    spec:
-      containers:
-        - name: modelserver
-          env:
-            # Disable vLLM usage telemetry — its writes to /.config fail
-            # under restricted SecurityContexts (e.g. OpenShift).
-            - name: DO_NOT_TRACK
-              value: "1"
-          volumeMounts:
-            - mountPath: /dev/shm
-              name: shm
-            - mountPath: /.cache
-              name: torch-compile-cache
-            # vllm/vllm-openai's Triton/Inductor caches at /.triton, which is
-            # not writable under restricted SecurityContexts (e.g. OpenShift).
-            - mountPath: /.triton
-              name: triton-cache
-      volumes:
-        - name: shm
-          emptyDir:
-            medium: Memory
-            sizeLimit: 20Gi
-        - name: torch-compile-cache
-          emptyDir: {}
-        - name: triton-cache
-          emptyDir: {}
-```
-
-**How to Apply**:
-
-1. **Option A - Create a custom patch file**:
-   ```bash
-   # Copy the guide to your deployments directory
-   cp -r ${LLMD_PATH}/guides/optimized-baseline deployments/my-deployment
-   
-   # Edit the patch file to add the missing configurations
-   vi deployments/my-deployment/modelserver/gpu/vllm/patch-vllm.yaml
-   
-   # Deploy using your custom configuration
-   kustomize build deployments/my-deployment/modelserver/gpu/vllm/ | kubectl apply -n ${NAMESPACE} -f -
-   ```
-
-2. **Option A - Add as a separate patch in kustomization.yaml**:
-   ```yaml
-   # In your kustomization.yaml
-   patches:
-     - path: patch-vllm.yaml
-     - path: patch-triton-cache.yaml  # Your new patch file
-   ```
-
-**Reference Implementations**:
-- Complete example: `${LLMD_PATH}/guides/precise-prefix-cache-aware/modelserver/gpu/vllm/patch-vllm.yaml`
-- Lines 60-63: Triton cache volume mount
-- Lines 44-45: DO_NOT_TRACK environment variable
-- Lines 84-85: Triton cache volume definition
-
-**Note**: These optimizations are particularly important when:
-- Running on OpenShift or other platforms with restricted SecurityContexts
-- Using vLLM with Triton compilation
-- Deploying in production environments with strict security policies
-- Experiencing permission-related errors during model loading or inference
-
-**Related Guides with Correct Implementation**:
-- `precise-prefix-cache-aware` - All accelerator variants (GPU, CPU, XPU, AMD, TPU, HPU)
-- `pd-disaggregation` - HPU variant
-- `tiered-prefix-cache` - Storage offloading configurations
+1. All pods `Running` and `Ready`, Helm release `deployed`, `InferencePool` present.
+2. Connectivity test only with approval (`references/connectivity-verification.md`).
+3. Record endpoint, model name, script path, and customizations in the summary.

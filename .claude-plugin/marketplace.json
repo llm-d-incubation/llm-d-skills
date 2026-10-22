@@ -79,7 +79,7 @@
       "skills": [
         "./skills/deploy-llm-d"
       ],
-      "description": "Configure and deploy an llm-d stack on an existing Kubernetes and OpenShift cluster using Well-Lit Path guides. Use this skill when users want to deploy, verify, or customize llm-d.",
+      "description": "Configure and deploy an llm-d stack on an existing Kubernetes or OpenShift cluster by driving the machine-readable guide.yaml of a Well-Lit Path guide (llm-d v1.0 and later). Use this skill when users want to deploy, verify, or customize llm-d from a guide they have already chosen.",
       "category": "devops",
       "keywords": [
         "llm-d",
