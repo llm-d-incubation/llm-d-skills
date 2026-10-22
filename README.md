@@ -51,7 +51,7 @@ Alternatively, copy any skill directory from [`skills/`](skills/) into `.claude/
 |-------|-------------|
 | [create-gke-infra-llm-d](skills/create-gke-infra-llm-d/) | Create or prepare GKE infrastructure (cluster, GPU node pools, RDMA/RoCE networking, DRA/DRANET drivers, Gateway API prerequisites) so llm-d can be deployed on it. |
 | [deploy-llm-d](skills/deploy-llm-d/) | Configure and deploy llm-d on existing Kubernetes and OpenShift clusters by driving a Well-Lit Path guide's machine-readable `guide.yaml` (llm-d v1.0 and later). |
-| [teardown-llm-d](skills/teardown-llm-d/) | Tear down, remove, clean up, or undeploy a deployed llm-d stack. |
+| [teardown-llm-d](skills/teardown-llm-d/) | Tear down, remove, clean up, or undeploy a deployed llm-d stack, using the guide's own `cleanup` steps where available (llm-d v1.0 and later). |
 | [run-llm-d-benchmark](skills/run-llm-d-benchmark/) | Run a benchmark workload against an already deployed llm-d stack using llm-d-benchmark tooling. |
 | [compare-llm-d-configurations](skills/compare-llm-d-configurations/) | Compare the benchmark performance of two llm-d stack configurations end-to-end. |
 | [configure-wva-autoscaling-llm-d](skills/configure-wva-autoscaling-llm-d/) | Configure and optimize Workload Variant Autoscaler (WVA) for llm-d inference deployments. |

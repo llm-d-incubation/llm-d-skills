@@ -191,7 +191,7 @@
       "skills": [
         "./skills/teardown-llm-d"
       ],
-      "description": "Tears down, removes, cleans up, or undeploys a deployed llm-d stack on Kubernetes: remove an llm-d deployment, clean up a namespace after inference workloads, uninstall helm releases for llm-d, or free up cluster resources used by llm-d. Also handles partial cleanup (e.g. remove only the model service, keep the gateway). Supports both Helm-based and Kustomize-based deployments.",
+      "description": "Tears down, removes, cleans up, or undeploys a deployed llm-d stack (llm-d v1.0 and later) on Kubernetes or OpenShift: removes the model servers (Deployments or DisaggregatedSets), uninstalls the llm-d router Helm release, and prefers the guide's own cleanup steps from guide.yaml. Handles partial cleanup (for example model servers only, keep the router). PVCs, the HuggingFace Secret, the Gateway, and the namespace are removed only on explicit request.",
       "category": "devops",
       "keywords": [
         "llm-d",

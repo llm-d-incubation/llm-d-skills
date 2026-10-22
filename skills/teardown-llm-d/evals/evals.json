@@ -1,22 +1,28 @@
 {
-  "skill_name": "teardown-llm-d-stack",
+  "skill_name": "teardown-llm-d",
   "evals": [
     {
       "id": 1,
       "prompt": "I'm done with my llm-d benchmark run. Please tear down the stack in my rachelt-benchmark namespace.",
-      "expected_output": "Detects namespace rachelt-benchmark, lists helm releases, presents teardown plan, confirms with user before uninstalling releases. Does not delete HTTPRoutes without asking.",
+      "expected_output": "Sets NAMESPACE=rachelt-benchmark, finds the deployments/deploy-*.sh record (or falls back to helm list and the llm-d.ai/guide labels), runs inventory.sh, presents a plan with model servers first and the router release last, and waits for confirmation. Emits the guide's cleanup.modelserver and cleanup.rest sections with guide.py when the checkout is known, with the namespace deletion removed. Asks separately about HTTPRoutes, Gateway, PVCs, the Secret, and the namespace; keeps them by default.",
       "files": []
     },
     {
       "id": 2,
-      "prompt": "Remove only the model service from my llm-d stack in namespace llm-d-test, but keep the gateway.",
-      "expected_output": "Lists all helm releases, identifies the model service release(s), presents a partial teardown plan scoped to only those releases, confirms before uninstalling. Does not touch gateway or HTTPRoutes.",
+      "prompt": "Remove only the model servers of my pd-disaggregation deployment in namespace llm-d-test, but keep the router and the gateway.",
+      "expected_output": "Identifies the DisaggregatedSet (not two Deployments) through the llm-d.ai/guide=pd-disaggregation label, presents a partial plan that deletes the model server overlay only (kubectl delete -k of the recorded overlay or the guide's cleanup.modelserver step), waits for the pods to terminate, and leaves the Helm release, InferencePool, HTTPRoute, and Gateway untouched.",
       "files": []
     },
     {
       "id": 3,
-      "prompt": "Clean up everything in namespace llm-d-dev after my experiment — releases and httproutes.",
-      "expected_output": "Lists all resources, presents full teardown plan. Confirms helm releases, then separately asks about HTTPRoutes deletion — as a distinct opt-in step. Executes each only after user confirms.",
+      "prompt": "Clean up everything llm-d in namespace llm-d-dev. I don't have the llm-d repo on this machine.",
+      "expected_output": "Uses the fallback path: helm list identifies the router release by the llm-d-router-* chart name, workloads are deleted by the llm-d.ai/guide label across deployments, statefulsets, and disaggregatedsets, unlabelled leftovers from the inventory (PodMonitors, ServiceAccounts) are listed by name for confirmation, then helm uninstall runs. Asks separately about HTTPRoutes and the Gateway, PVCs, the Secret, and the namespace, and does not touch LWS, KEDA, or CRDs.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "This is the compare-llm-d-configurations workflow between Run A and Run B: uninstall the Helm releases and remove HTTPRoutes and Gateways, keep PVCs and the namespace, do not ask about optional steps.",
+      "expected_output": "Applies the stated constraints without prompting for the optional items: removes the model servers and the Helm release, deletes the HTTPRoutes and the Gateway, keeps PVCs, the Secret, and the namespace, verifies with the inventory, and records the commands in deployments/teardown-YYYYMMDD.sh.",
       "files": []
     }
   ]
