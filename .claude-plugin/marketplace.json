@@ -101,7 +101,7 @@
       "skills": [
         "./skills/run-llm-d-benchmark"
       ],
-      "description": "Benchmark an already-deployed llm-d stack using the llmdbenchmark CLI, either following a named guide (e.g. optimized-baseline, pd-disaggregation) or using a custom workload profile against any inference endpoint. Use it to measure performance (TTFT, throughput, ITL), validate a deployment under load, or run inference-perf/guidellm/vllm-benchmark. Expects an endpoint to already exist; install deploy-llm-d if you also need to stand one up.",
+      "description": "Benchmark an already-deployed llm-d stack (llm-d v1.0 and later) with the llmdbenchmark CLI, either following a named guide (e.g. optimized-baseline, pd-disaggregation) or using a custom workload profile against any OpenAI-compatible endpoint. Use it to measure performance (TTFT, TPOT, ITL, throughput), validate a deployment under load, or run inference-perf, guidellm, vllm-benchmark, aiperf, inferencemax, or lm-eval. Expects an endpoint to already exist; install deploy-llm-d if you also need to stand one up.",
       "category": "devops",
       "keywords": [
         "llm-d",

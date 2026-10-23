@@ -1,0 +1,29 @@
+{
+  "skill_name": "run-llm-d-benchmark",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run a quick benchmark against the optimized-baseline stack I deployed in namespace llm-d-test.",
+      "expected_output": "Verifies or installs the llmdbenchmark CLI non-interactively, finds the router release and the llm-d.ai/guide label to set GUIDE_NAME=optimized-baseline, resolves ENDPOINT_URL from the optimized-baseline-epp ClusterIP with GATEWAY_CLASS=standalone, confirms the model name through /v1/models from inside the cluster, checks CPU headroom and the StorageClass (adds --set harness.resources.* and --no-pvc when needed), runs inference-perf with sanity_random.yaml without --analyze, collects modelserver container logs into results/vllm-logs, and prints the per-stage table with summarize-results.py.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Reproduce the published pd-disaggregation numbers on our H200 cluster behind the Istio gateway.",
+      "expected_output": "Uses --spec guides/pd-disaggregation, resolves the endpoint from Gateway llm-d-inference-gateway with GATEWAY_CLASS=istio, selects guide_pd-disaggregation_1.yaml (and offers _2), warns that the ladder is sized for the guide's reference hardware, collects logs from both prefill and decode pods including the routing-proxy container, and summarizes every stage of the benchmark reports.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Benchmark this endpoint http://my-router.inference.svc:80 with my own profile at ./profiles/agent-load.yaml. There is no llm-d guide; we deployed by hand.",
+      "expected_output": "Uses custom endpoint mode: --spec guides/optimized-baseline as the closest scenario (stated to the user), --endpoint-url from the user, --gateway-class chosen from the topology, --workload-file-path ./profiles/agent-load.yaml, confirms the model name from /v1/models, asks for the pod label selector for log collection because llm-d.ai/guide is absent, and does not edit files in the llm-d-benchmark checkout.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Our GKE cluster has only standard-rwo storage and the CPU nodes have 4 vCPUs. Can you still run inference-perf against the stack in namespace bench?",
+      "expected_output": "Explains that workload-pvc needs ReadWriteMany and chooses --no-pvc (no llm-d-prism), lowers the harness request with --set harness.resources.cpu and --set harness.resources.memory before the run subcommand, notes that the lower CPU count caps the achievable request rate, runs the benchmark, and verifies the results were copied from the harness pod into the workspace.",
+      "files": []
+    }
+  ]
+}
