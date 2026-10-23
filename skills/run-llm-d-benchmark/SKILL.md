@@ -1,18 +1,36 @@
 ---
 name: run-llm-d-benchmark
-description: Benchmark an already-deployed llm-d stack using the llmdbenchmark CLI. Use this skill when the user wants to run a benchmark workload against a deployed llm-d stack — whether following a named guide (e.g. optimized-baseline, pd-disaggregation) or using a custom workload profile against any inference endpoint. Activate for requests to measure performance (TTFT, throughput, ITL), validate a deployment under load, or run inference-perf/guidellm/vllm-benchmark — even if they don't use the word "benchmark" explicitly.
+description: Benchmark an already-deployed llm-d stack (llm-d v1.0 and later) with the llmdbenchmark CLI from llm-d-benchmark. Use this skill when the user wants to run a benchmark workload against a deployed llm-d stack, either following a named guide (for example optimized-baseline, pd-disaggregation) or with a custom workload profile against any OpenAI-compatible endpoint. Activate for requests to measure performance (TTFT, TPOT, ITL, throughput), validate a deployment under load, or run inference-perf, guidellm, vllm-benchmark, aiperf, inferencemax, or lm-eval, even if the word "benchmark" is not used.
 ---
 
 # Run llm-d Benchmark
 
 ## Purpose
 
-Run a benchmark workload against an already-deployed llm-d stack using the `llmdbenchmark` CLI. Useful for evaluating the performance of the llm-d stack. Supports two modes:
+Run a benchmark workload against an already-deployed llm-d stack with the `llmdbenchmark` CLI (the run-only path of llm-d-benchmark). The CLI deploys a harness launcher pod into the namespace, renders a workload profile into it, runs the chosen harness against the endpoint, copies the results to a local workspace, and runs the analysis that produces the harness-agnostic benchmark reports. Two modes:
 
-- **Guide mode**: the stack was deployed from a named llm-d guide (e.g. `optimized-baseline`). Use `--spec guides/<name>` and pick from guide-specific or generic workload profiles.
-- **Custom workload mode**: the user provides their own workload profile (or a path to an existing one) and a direct endpoint URL. No guide name required.
+- **Guide mode**: the stack was deployed from a named llm-d guide. `--spec guides/<name>` selects the matching benchmark scenario and the `guide_<name>_<n>.yaml` profiles reproduce the published load ladders.
+- **Custom endpoint mode**: the user supplies an endpoint URL and a workload profile. A scenario is still required (`--spec`), so the closest guide is used.
 
-Both modes follow [`helpers/benchmark.md`](https://github.com/llm-d/llm-d/blob/main/helpers/benchmark.md). When the benchmark completes, results are available in the local workspace directory.
+The upstream reference for this skill is `${LLMD_PATH}/docs/operations/validation/benchmark.md` in the llm-d repository (the former `helpers/benchmark.md`). Flags and profiles below were checked against llm-d-benchmark v1.0.0.
+
+## Rules
+
+1. **Do not change cluster-level resources.** Scope every `kubectl` command to `-n ${NAMESPACE}`. The CLI itself creates only namespaced objects (harness pod, ConfigMaps, the workload PVC, the data-access pod, llm-d-prism).
+2. **Do not modify committed files** in the llm-d or llm-d-benchmark checkouts. New profiles are new files under `workload/profiles/<harness>/` or are passed with `--workload-file-path`.
+3. **Notify the user before creating Kubernetes resources** and **confirm before deleting any**.
+4. Reading environment variables needs no permission.
+
+## Prerequisites
+
+Client side: `kubectl` (or `oc`), `helm`, `git`, `curl`, `jq`, and either `uv` or a system Python 3.14 or newer for the CLI's virtualenv (llm-d-benchmark v1.0.0 requires Python 3.14; `uv` downloads it). The installer installs missing `helm`, `helmfile`, `kubectl`, and `oc` through the system package manager, which may require `sudo` on Linux; install them beforehand to avoid prompts.
+
+Cluster side:
+
+- A deployed stack whose endpoint is reachable from inside the cluster (`deploy-llm-d`).
+- The Secret `llm-d-hf-token` in the harness namespace. The harness pod uses it to download the tokenizer; gated models fail without it.
+- CPU headroom for the harness launcher pod: 16 CPUs and 32 GiB memory by default. Smaller requests are set with `--set harness.resources.cpu=<n> --set harness.resources.memory=<size>` (Step 7).
+- A `ReadWriteMany` StorageClass for the workload PVC, or `--no-pvc` (Step 7).
 
 ---
 
@@ -20,22 +38,18 @@ Both modes follow [`helpers/benchmark.md`](https://github.com/llm-d/llm-d/blob/m
 
 ### Step 1: Verify or Install the `llmdbenchmark` CLI
 
-Check whether the CLI is available:
-
 ```bash
-command -v llmdbenchmark 2>/dev/null && llmdbenchmark --version
+command -v llmdbenchmark && llmdbenchmark --version
 ```
 
-If not found, check for the repo locally and install if missing:
+If it is not installed, clone the repository and run the installer with `--uv`, which skips the interactive prompt and lets `uv` provide Python 3.14 (it creates `./llm-d-benchmark/.venv`):
 
 ```bash
-# Is the repo already cloned?
-ls ./llm-d-benchmark 2>/dev/null || \
-  curl -sSL https://raw.githubusercontent.com/llm-d/llm-d-benchmark/main/install.sh | bash
+git clone https://github.com/llm-d/llm-d-benchmark.git
+cd llm-d-benchmark && ./install.sh --uv
 ```
-For troubleshooting install issues - Check Makefile for install instructions and dependencies.
 
-Activate the virtualenv and enter the repo — both are required for every new shell session:
+`./install.sh --no-uv -y` uses the system interpreter instead and fails with `Python 3.14+ required` on older systems; do not combine `-y` with `--uv`, since `-y` forces the system interpreter. The one-line form `curl -sSL https://raw.githubusercontent.com/llm-d/llm-d-benchmark/main/install.sh | bash` is equivalent but prompts for the virtualenv tool. Activate the virtualenv and stay inside the repository for every later command: the virtualenv provides the `llmdbenchmark` executable and the repository provides `workload/profiles/` and `config/specification/`.
 
 ```bash
 cd llm-d-benchmark
@@ -43,366 +57,306 @@ source .venv/bin/activate
 llmdbenchmark --version
 ```
 
-> **All subsequent `llmdbenchmark` commands must be run from inside `llm-d-benchmark/` with the venv active.**
+An existing clone is reused by the installer but not updated. If a flag below is reported as `unrecognized arguments`, run `git -C llm-d-benchmark pull` and re-run the installer.
 
 ---
 
-### Step 2: Locate the Namespace and (Optionally) the Guide Name
+### Step 2: Locate the Stack and the Guide
 
-Locate the llm-d stack according to the following logic:
+1. `NAMESPACE`: the environment variable, else the active `oc project`, else ask. Export it.
+2. Confirm a stack is deployed and identify the guide:
+   ```bash
+   helm list -n ${NAMESPACE}                                   # router release: chart llm-d-router-*, release name = guide name
+   kubectl get pods -n ${NAMESPACE} -L llm-d.ai/guide,llm-d.ai/role
+   ```
+   The `deploy-llm-d` record `deployments/deploy-*.sh` (header line `guide: ... namespace: ... mode: ...`) gives the same information when present. Set `GUIDE_NAME` (for example `optimized-baseline`, `pd-disaggregation`). If no pods are running, tell the user the stack is not deployed and point to `deploy-llm-d`.
+3. Map the guide to a benchmark scenario:
+   ```bash
+   ls config/specification/guides/        # available --spec values, without the .yaml.j2 suffix
+   ```
+   Use `--spec guides/${GUIDE_NAME}` when a file of that name exists. Guides without a scenario (model guides under `guides/models/`, `omni-serving`, `agentic-api`, `modelexpress-p2p`, `pod-snapshot`, `rollouts`) use the scenario of the closest topology: `guides/optimized-baseline` for aggregated serving, `guides/pd-disaggregation` for prefill/decode, `guides/wide-ep` for wide expert parallelism. Say so to the user; the scenario only shapes the plan the CLI renders around the harness pod.
 
-1. If a NAMESPACE environment variable is specified, the llm-d stack is assumed to be deployed there
-2. If an oc project exists, the stack is assumed to be deployed in the current oc project.
-3. If none of the above holds, ask the user for the NAMESPACE where it is deployed.
-4. Make sure the NAMESPACE environment variable is set.
+In custom endpoint mode skip the guide detection, set `SPEC=guides/optimized-baseline` unless the user names another, and take `ENDPOINT_URL` from the user in Step 3.
 
-Verify that the stack is indeed deployed in the detected or provided namespace using kubectl commands. If you cannot locate the stack, ask the user to deploy one and refer to the llm-d-kubernetes deployment skill.
-
-Determine if the user wants to run an existing/modified guide workload or a custom workload
-- **Guide mode**: If guide name provided (e.g. `optimized-baseline`, `pd-disaggregation`). Set `GUIDE_NAME`. This maps to `--spec guides/${GUIDE_NAME}` and narrows the profile list in Step 5.
-- **Custom workload mode**: `GUIDE_NAME` is unset. The user will supply the endpoint URL directly in Step 3 and the workload profile path in Step 6.
 ---
 
 ### Step 3: Resolve the Endpoint and Gateway Class
 
-Determine and set the `ENDPOINT_URL` environment variable — this is the *full* URL of the gateway/epp/clusterIP service that exposes the inference endpoint. If ${GUIDE_NAME} defined, it might also be part of the service name. You can find it by running:
+Standalone Mode (the default of every guide; the router is an EPP pod with an Envoy sidecar):
+
 ```bash
-kubectl get svc -n $NAMESPACE
+export ENDPOINT_URL="http://$(kubectl get service ${GUIDE_NAME}-epp -n ${NAMESPACE} -o jsonpath='{.spec.clusterIP}')"
+export GATEWAY_CLASS=standalone      # epponly is accepted as a synonym
 ```
-Look for the gateway or ingress service (typically named something like `llm-d-inference-gateway`). Ask the user to confirm if ambiguous.
-If no pods are found or none are Running, tell the user the stack does not appear to be deployed and suggest using the `deploy-llm-d` skill first.
 
-Determine and set the `GATEWAY_CLASS` environment variable - this is the topology type: `epponly` (standalone EPP), `istio`, `gke`, `agentgateway`, or `data-science-gateway-class`
+Gateway Mode (a Kubernetes Gateway in front of the InferencePool):
 
-If auto-detection finds nothing, List available services in the namespace to help the user identify the right endpoint.
----
+```bash
+export ENDPOINT_URL="http://$(kubectl get gateway llm-d-inference-gateway -n ${NAMESPACE} -o jsonpath='{.status.addresses[0].value}')"
+export GATEWAY_CLASS=<istio|agentgateway|gke>   # the provider used when the Gateway was deployed
+```
 
-### Step 4: Confirm the Model Name
+`--gateway-class` must be passed even in run-only mode; without it the rendered plan may not match the topology. `llmdbenchmark --spec ${SPEC} run --list-endpoints --namespace ${NAMESPACE}` prints the endpoints the CLI can detect, with ready-to-run invocations.
 
-The `--model` flag must match exactly what the server reports.
-Check which models are available in the stack deployment by querying ${ENDPOINT_URL}/v1/models or looking at the decoders helm deployment.
-Set `MODEL` to the exact string returned (e.g. `Qwen/Qwen3-32B`, `openai/gpt-oss-120b`). If multiple models are returned, ask the user to select one.
-
-> **Common error**: `"did not return expected model 'X'"` means there is a mismatch — always confirm the model name from the live endpoint.
+If `kubectl get svc -n ${NAMESPACE}` shows neither service, list the services and ask the user which one fronts the model servers.
 
 ---
+
+### Step 4: Confirm the Served Model Name
+
+`--model` must equal the ID the endpoint reports. Query it from inside the cluster:
+
+```bash
+kubectl run curl-probe -n ${NAMESPACE} --rm -i --restart=Never --image=cfmanteiga/alpine-bash-curl-jq \
+  -- sh -c "curl -s ${ENDPOINT_URL}/v1/models | jq -r '.data[].id'"
+```
+
+Set `MODEL` to the returned string (for example `Qwen/Qwen3-32B`). With several models, ask the user which one to benchmark. The error `did not return expected model 'X'. Available models: ['Y']` always means this step was skipped or wrong.
+
+---
+
 ### Step 5: Select the Harness
 
-Ask the user for a harness to use, the available harnesses are:
-- `inference-perf` 
-- `guidellm`
-- `inferencemax`
-- `vllm-benchmark`
+| Harness | Tool | Use |
+|---|---|---|
+| `inference-perf` (default) | kubernetes-sigs/inference-perf | Load ladders, shared-prefix and multi-turn workloads, trace replay; richest profile catalog, all `guide_*` profiles |
+| `guidellm` | guidellm | Rate sweeps and concurrency patterns |
+| `vllm-benchmark` | `vllm bench serve` | vLLM-native latency percentiles; `guide_wide-ep_1` |
+| `aiperf` | NVIDIA AIPerf | Synthetic or trace datasets (for example mooncake traces) |
+| `inferencemax` | custom script | Warmup and seeded random workloads |
+| `lm-eval` | lm-evaluation-harness | Accuracy on standard tasks; no latency or throughput report |
+| `nop` | no-op | Pipeline check without load (harness pod, PVC, collection) |
+
+Set `HARNESS`. All harnesses except `lm-eval` write the harness-agnostic `benchmark_report,_stage_*.yaml` files used in Step 14.
 
 ---
 
 ### Step 6: Select a Workload Profile
 
-#### Option A: User provides a custom profile path
-
-If the user provided a custom workload profile path, first verify it's content is a workload.
-If not, extract relevant workload.<name> section to <name>.yaml file to create a custom profile file.
-Next, copy it into `workload/profiles/${HARNESS:-inference-perf}/` if needed.
-Set `WORKLOAD_PROFILE=<custom_profile.yaml>`. Always pass the `.yaml` form to `--workload`.
-
-#### Option B: Pick from shipped profiles
-
-**Guide mode** — list guide-specific and generic profiles for the selected harness:
+Profiles live in `workload/profiles/${HARNESS}/` as `.yaml.in` templates (a few as `.yaml`); always pass the `.yaml` form to `--workload`.
 
 ```bash
-ls workload/profiles/${HARNESS:-inference-perf}/ | grep -E "guide_${GUIDE_NAME}|shared_prefix|sanity"
+ls workload/profiles/${HARNESS}/
+ls workload/profiles/${HARNESS}/ | grep -E "^guide_${GUIDE_NAME}_"     # guide mode
 ```
 
-**Custom workload mode** — list all generic profiles (no guide filter):
-
-```bash
-ls workload/profiles/${HARNESS:-inference-perf}/ | grep -v "^guide_"
-```
-
-Display the list and recommend:
+Recommendations for `inference-perf`:
 
 | Goal | Profile |
-|------|---------|
-| Quick smoke test / path validation | `shared_prefix_synthetic.yaml` |
-| Full guide benchmark (reproduces published results) | `guide_${GUIDE_NAME}_1.yaml` *(guide mode only, if present)* |
-| Sanity check | `sanity_random.yaml` |
-| Multi-turn chat | `shared_prefix_multi_turn_chat.yaml` |
-| Code completion | `code_completion_synthetic.yaml` |
+|---|---|
+| Smoke test (1 req/s for 30 s) | `sanity_random.yaml` |
+| Reproduce the guide's published load ladder | `guide_${GUIDE_NAME}_1.yaml` (and `_2`, when present) |
+| Prefix-cache aware routing under a ladder | `shared_prefix_synthetic.yaml`, `approx_prefix_cache_ladder.yaml` |
+| Multi-turn chat | `shared_prefix_multi_turn_chat.yaml`, `interactive-chat.yaml` |
+| Code completion, summarization, chatbot | `code_completion_synthetic.yaml`, `summarization_synthetic.yaml`, `chatbot_synthetic.yaml` |
+| Prefill-heavy or decode-heavy steady load | `random_prefill_heavy.yaml`, `random_decode_heavy.yaml`, `random_symmetrical.yaml` |
+| Agentic trace replay | `agentic_code_generation.yaml`, `agent_llm_traces_v2.yaml` |
 
-If the user wants to author a new profile from scratch, offer to help: copy a relevant `.yaml.in` template from `workload/profiles/${HARNESS}/`, edit it to their specifications, and save it as a new `.yaml` file. Substitution tokens like `REPLACE_ENV_LLMDBENCH_DEPLOY_CURRENT_MODEL` are resolved automatically at runtime — no manual `envsubst` needed.
+The catalog with load pattern and data type of every profile is `workload/README.md` ("Available Profiles by Harness"). Guide profiles are sized for the guide's reference hardware; a smaller deployment should start with `sanity_random.yaml` or an `--overrides` reduced ladder (Step 9).
 
-Set `WORKLOAD_PROFILE` to the selected or generated profile path.
-
----
-
-### Step 7: Set the Workspace Directory
-
-The CLI auto-generates a timestamped within the workspace.
-
-```bash
-# Auto-generated (default) — CLI prints the path during the run
-# No --workspace flag needed
-
-# Or user-specified:
-export WORKSPACE_DIR="<user-provided path>"
-```
-
-Confirm the workspace path before running. If the user specifies one, make sure the directory exists:
-
-```bash
-mkdir -p ${WORKSPACE_DIR}
-```
+Custom profiles: copy a `.yaml.in` template to a new name in the same directory and pass its `.yaml` name, or pass any local file with `--workload-file-path <path>` (then `--workload` is not resolved). `REPLACE_ENV_*` tokens (`REPLACE_ENV_LLMDBENCH_DEPLOY_CURRENT_MODEL`, `REPLACE_ENV_LLMDBENCH_HARNESS_STACK_ENDPOINT_URL`) are substituted at run time. Set `WORKLOAD_PROFILE`.
 
 ---
 
-### Step 8: Override Profile Parameters (optional)
+### Step 7: Size the Harness Pod and Choose the Storage Mode
 
-If asked to modify workload configuration, either create a copy of the yaml file, modify it and set it as the workload (see Step 6.A) or set
-`OVERRIDES` to provide the per run overrides "key=value,..." of the individual workload profile fields.
-Keys should use **dotted paths** matching the YAML structure of the profile (e.g. data.shared_prefix.question_len).
+1. **CPU and memory.** The launcher pod requests 16 CPUs and 32 GiB by default and stays `Pending` on smaller nodes. Check headroom and lower the request when needed; load generation is CPU-bound, so a smaller request limits the achievable request rate:
+   ```bash
+   kubectl describe nodes | grep -A4 'Allocated resources' | grep -E 'cpu|memory'
+   SET_ARGS=(--set harness.resources.cpu=4 --set harness.resources.memory=8Gi)   # example for small CPU nodes
+   ```
+   `--set` is a `run` flag (after `run`) and overrides the scenario; `harness.nodeSelector` is settable the same way. The scenario's `harness.resources.memoryLimit` (128Gi) is a limit and does not block scheduling.
+2. **Workload PVC.** The harness, the data-access pod, and llm-d-prism share a `ReadWriteMany` PVC named `workload-pvc`:
+   ```bash
+   kubectl get storageclass
+   kubectl get pvc workload-pvc -n ${NAMESPACE} 2>/dev/null
+   ```
+   With no RWX-capable class (GKE without the Filestore CSI driver, most PD-only clusters), use `--no-pvc`: results are copied from the harness pod directly and llm-d-prism is not deployed. With an RWX class that is not the default, set `storage.workloadPvc.storageClassName` in the scenario or with `--set`, and raise `--pvc-bind-timeout`. A PVC's StorageClass is immutable and the CLI reuses an existing claim; delete a claim created with the wrong class before retrying.
+3. **Permissions.** Add the top-level `--non-admin` when the user lacks cluster-wide read access; the CLI then skips its cluster-admin sanity checks.
+4. **HuggingFace Secret.** `kubectl get secret llm-d-hf-token -n ${NAMESPACE}`; create it as in the guide's `prerequisites.secrets` step if missing (the CLI does not create it).
 
 ---
 
-### Step 9: Configure Timeouts (if needed)
+### Step 8: Set the Workspace
 
-The defaults are usually sufficient. Mention them to the user and ask only if they are on a slow cluster or seeing timeout errors:
+Results land on the local machine under `<workspace>/runner-<timestamp>/`. Without `--workspace` the CLI creates a timestamped directory and prints it in the run summary. When the user, or a calling skill such as `compare-llm-d-configurations`, supplies a workspace:
 
-| Flag | Default | Environment variable |
-|------|---------|---------------------|
-| `--wait-timeout` | 3600s | `LLMDBENCH_WAIT_TIMEOUT` |
-| `--pvc-bind-timeout` | 240s | `LLMDBENCH_PVC_BIND_TIMEOUT` |
-| `--data-access-timeout` | 120s | `LLMDBENCH_DATA_ACCESS_TIMEOUT` |
-
-For slow clusters or first-time image pulls, extend to:
 ```bash
---wait-timeout 7200 --pvc-bind-timeout 1200 --data-access-timeout 600
+export WORKSPACE_DIR=<path>; mkdir -p "${WORKSPACE_DIR}"
 ```
 
 ---
 
-### Step 10: Show and Run the Benchmark Command
+### Step 9: Override Profile Parameters (optional)
 
-Display the full command to the user for review, then run it.
+`--overrides "key=value,..."` edits fields of the rendered profile; keys are dotted paths, numeric segments index lists, values are parsed as YAML. A key whose parent path does not exist is ignored with a warning in the run log. Example for `sanity_random.yaml` at 5 req/s for 120 s with 500 prompts:
+
+```bash
+OVERRIDES="load.stages.0.rate=5,load.stages.0.duration=120,data.input_distribution.total_count=500"
+```
+
+---
+
+### Step 10: Timeouts (if needed)
+
+| Flag | Default | Controls |
+|---|---|---|
+| `--wait-timeout` | 3600 s (or the scenario's `harness.waitTimeout`) | harness pod start and harness completion, each phase separately |
+| `--pvc-bind-timeout` | 240 s | `workload-pvc` reaching `Bound` (no effect with `--no-pvc`) |
+| `--data-access-timeout` | 120 s | data-access pod `Ready` (no effect with `--no-pvc`) |
+
+First-time image pulls and slow shared storage need `--wait-timeout 7200 --pvc-bind-timeout 1200 --data-access-timeout 600`. `--wait-timeout 0` dispatches and returns without waiting; combine it with `--no-cleanup`.
+
+---
+
+### Step 11: Show and Run the Benchmark Command
+
+Display the command, then run it from inside `llm-d-benchmark/` with the virtualenv active:
 
 ```bash
 llmdbenchmark \
-    --spec           guides/${GUIDE_NAME} \
+    --spec           ${SPEC:-guides/${GUIDE_NAME}} \
     ${WORKSPACE_DIR:+--workspace "${WORKSPACE_DIR}"} \
     run \
+    ${SET_ARGS[@]+"${SET_ARGS[@]}"} \
     --endpoint-url   "${ENDPOINT_URL}" \
     --gateway-class  "${GATEWAY_CLASS}" \
     --model          "${MODEL}" \
     --namespace      "${NAMESPACE}" \
-    --harness        ${HARNESS:-inference-perf} \
-    --workload       ${WORKLOAD_PROFILE} \
+    --harness        "${HARNESS:-inference-perf}" \
+    --workload       "${WORKLOAD_PROFILE}" \
     ${OVERRIDES:+--overrides "${OVERRIDES}"} \
-    --wait-timeout   ${WAIT_TIMEOUT:-3600} \
-    --analyze
+    ${NO_PVC:+--no-pvc} \
+    ${MONITORING:+--monitoring} \
+    --wait-timeout   ${WAIT_TIMEOUT:-3600}
 ```
 
-> **Note:** `--analyze` triggers post-run distribution plot generation under `analysis/distributions/`. Add it unless the user explicitly opts out.
+`--spec`, `--workspace`, and `--non-admin` are accepted before or after `run`; `--set` and the flags below only after `run`. Optional flags: `--monitoring` scrapes the model server and EPP `/metrics` during the run and embeds them in the report (off by default); `--no-prism` skips the llm-d-prism dashboard; `--no-cleanup` keeps the harness pod and its ConfigMaps for inspection (the next run removes them); `--parallelism <n>` starts several harness pods with the same profile; `--output gs://... | s3://...` mirrors the results to cloud storage (`--output` does not accept local paths; use `--workspace`). `--analyze` is deprecated and ignored: analysis always runs inside the harness pod.
 
-Monitor output as it runs. The CLI will print the workspace path early in the logs — note it for Step 13.
+Note the workspace path printed at the start of the run; `RUN_DIR=<workspace>/runner-<timestamp>` is used below.
 
 ---
 
-### Step 11: Monitor and Wait for Completion
-
-The CLI manages the harness pod lifecycle. Monitor the harness pod for processing completion:
+### Step 12: Monitor the Run
 
 ```bash
-kubectl get pod -n $NAMESPACE -l app=llmdbench-harness-launcher -w
+kubectl get pods -n ${NAMESPACE} -l app=llmdbench-harness-launcher -w
+kubectl logs -n ${NAMESPACE} -l app=llmdbench-harness-launcher -f --tail=100
+kubectl get pods -n ${NAMESPACE} -l role=llm-d-benchmark-data-access     # PVC mode only
 ```
 
-Or follow the harness logs directly:
-
-```bash
-kubectl logs -n $NAMESPACE -l app=llmdbench-harness-launcher -f --tail=100
-```
-
-Note that the benchmark harness pod may still be running also after the benchmarking run is completed.
-If benchmarking needs to be rerun due to an error in a previous run, vllm pods need to be restarted first to evict the kv cache.
-In case the the harness pod is OOMKilled, try to increase the harness memory.
-If pod reaches `Failed` status, diagnose using the troubleshooting guide below.
+The run ends with a `BENCHMARK RUN SUMMARY` block listing the harness, workload, model, treatments, the local results path, and, in PVC mode, how to reach llm-d-prism (a Route URL on OpenShift, a `kubectl port-forward -n ${NAMESPACE} svc/llm-d-prism 8080:<port>` command elsewhere). A `Pending` harness pod with `Insufficient cpu` means Step 7 sizing; an `OOMKilled` harness needs a larger `harness.resources.memory`. A failed run is diagnosed with the Troubleshooting section before any re-run; re-running without clearing the model servers' prefix cache measures a warm cache (`clear-kv-cache-tiers-in-llm-d-deployment`).
 
 ---
 
-### Step 12: Collect vLLM Pod Logs
+### Step 13: Collect Model Server Logs
 
-Save logs from all vLLM pods before they are recycled - to aid in debugging and performance analysis. First locate them:
-
-```bash
-# Try the llm-d role label (most reliable for guide-based deployments)
-kubectl get pods -n $NAMESPACE -l llm-d.ai/role=decode -o name 2>/dev/null
-
-# Fallback: standard vllm component label
-kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=vllm -o name 2>/dev/null
-
-# Last resort: grep by name
-kubectl get pods -n $NAMESPACE | grep -i vllm | awk '{print "pod/"$1}'
-```
-
-Locate the directory the llmdbenchmark uses in the workspace. Collect and save logs:
+Save the model server logs next to the results before the pods are recycled. Pods carry `llm-d.ai/guide=${GUIDE_NAME}` and `llm-d.ai/role`; the engine container is `modelserver`, decode pods of disaggregated guides also run `routing-proxy`:
 
 ```bash
-mkdir -p <benchmark-dir>/vllm-logs
-for pod in $(kubectl get pods -n $NAMESPACE -l llm-d.ai/role=decode -o name 2>/dev/null); do
-  pname=$(echo $pod | sed 's|pod/||')
-  kubectl logs -n $NAMESPACE $pname --timestamps \
-    > "<benchmark-dir>/logs/${pname}.log" 2>&1
-  echo "Collected: ${pname}"
+mkdir -p "${RUN_DIR}/results/vllm-logs"
+for pod in $(kubectl get pods -n ${NAMESPACE} -l llm-d.ai/guide=${GUIDE_NAME} --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}'); do
+  kubectl logs -n ${NAMESPACE} ${pod} -c modelserver --timestamps > "${RUN_DIR}/results/vllm-logs/${pod}.modelserver.log" 2>&1
+  kubectl logs -n ${NAMESPACE} ${pod} -c routing-proxy --timestamps > "${RUN_DIR}/results/vllm-logs/${pod}.routing-proxy.log" 2>/dev/null || rm -f "${RUN_DIR}/results/vllm-logs/${pod}.routing-proxy.log"
 done
+kubectl logs -n ${NAMESPACE} deploy/${GUIDE_NAME}-epp -c epp --timestamps > "${RUN_DIR}/results/vllm-logs/${GUIDE_NAME}-epp.log" 2>&1 || true
 ```
 
-If a pod has multiple containers, add `-c vllm` (or the appropriate container name) to the `kubectl logs` command.
+Without the guide label (custom stacks) use `kubectl get pods -n ${NAMESPACE} --show-labels` to pick the selector. With `--monitoring` the CLI also captures pod logs into the results.
 
 ---
 
-### Step 13: Verify Workspace Results
-Locate the directory the llmdbenchmark uses in the workspace and use it in this step.
-Check that result files landed in the local workspace:
+### Step 14: Verify and Summarize the Results
 
 ```bash
-ls <benchmark-dir>/results/
-find <benchmark-dir>/results -name "*lifecycle_metrics.json" | sort
+ls "${RUN_DIR}/results/"
+find "${RUN_DIR}/results" -name 'benchmark_report*' -o -name 'summary_lifecycle_metrics.json' | sort
 ```
 
-If the directory is empty or missing (e.g. the CLI exited with `http2: client connection lost` during the copy phase), the harness pod might completed successfully and results are still on the cluster's `workload-pvc`. Check if results are on the PVC and try to copy them:
+Layout per harness pod: `results/<experiment-id>_<i>/` with `benchmark_report,_stage_<n>.yaml` (harness-agnostic, schema v0.2), the harness's native files (`stage_<n>_lifecycle_metrics.json`, `summary_lifecycle_metrics.json`, `per_request_lifecycle_metrics.json` for inference-perf), `config.yaml`, the rendered profile, `stdout.log`, `stderr.log`; `plan/` and `environment/` sit next to `results/`.
+
+If `results/` is empty (for example the copy phase lost the connection), re-collect without re-running: `llmdbenchmark --spec ${SPEC} ${WORKSPACE_DIR:+--workspace "${WORKSPACE_DIR}"} run --skip --namespace ${NAMESPACE} ...` reads the existing results from the PVC; with `--no-pvc --no-cleanup` the kept harness pod still holds them (`kubectl cp`).
+
+Print the per-stage table from the benchmark reports:
 
 ```bash
-# Locate the results on the PVC
-kubectl exec -n $NAMESPACE <workload-pvc> -- \
-  find /workspace -name "summary_lifecycle_metrics.json" | sort
-
-# Copy from the PVC once you identify the run directory
-kubectl cp $NAMESPACE/<workload-pvc>:/workspace/<run-dir>/results \
-  <llmdbenchmark-dir>/results/
+python3 skills/run-llm-d-benchmark/scripts/summarize-results.py "${RUN_DIR}"
 ```
 
-The `<run-dir>` is printed early in the CLI output: `Created llmdbenchmark instance in workspace: .../<run-dir>`. Check the benchmark log if available, or use the `find` command above to locate it.
+It reports requests and failures, request rate, output and total token rate, TTFT p50/p90/p99, TPOT and ITL means, and end-to-end latency p50/p90/p99 per stage (`--json` for structured output). `lm-eval` produces accuracy tables in its native files instead.
 
 ---
 
-### Step 14: Display Results Summary
+### Step 15: Announce Completion and Offer Cleanup
 
-Display the workspace layout after a completed run, list main directories and files under `<workspace>/<run-[a,b]>/<experience-id>`
-
-Read `summary_lifecycle_metrics.json` and display a brief results table covering:
-
-| Metric | Value |
-|--------|-------|
-| TTFT p50 / p90 (s) | |
-| E2E latency p50 / p90 (s) | |
-| Throughput (req/s) | |
-| Output tokens/s | |
-| Error rate (%) | |
-
----
-
-### Step 15: Announce Completion
-
-Tell the user where everything is saved and what to look at next:
+Report the run directory, the summary table, and the log directory:
 
 ```
-Benchmark complete. Results are in: <WORKSPACE_DIR>/
-
-Key files:
-  results/<experiment-id>/summary_lifecycle_metrics.json   — aggregated metrics
-  results/<experiment-id>/stage_*_lifecycle_metrics.json   — per-stage data
-  results/<experiment-id>/analysis/distributions/          — distribution plots (if --analyze was used)
-  logs/                                                     — vLLM pod logs
-
-To regenerate analysis plots from existing data, re-run llmdbenchmark with --analyze
-pointing at the existing workspace.
+Benchmark complete. Run directory: <RUN_DIR>
+  results/<experiment-id>_<i>/benchmark_report,_stage_*.yaml   harness-agnostic reports
+  results/<experiment-id>_<i>/summary_lifecycle_metrics.json   inference-perf native summary
+  results/vllm-logs/                                           model server and EPP logs
+  plan/, environment/                                          rendered plan and cluster context
 ```
+
+Benchmark leftovers stay in the namespace between runs: `workload-pvc` (billed shared storage), the data-access pod, `service/llm-d-benchmark-harness`, the llm-d-prism Deployment and Service, and two ConfigMaps. Offer to remove them when the user is done benchmarking in the namespace, and only after confirmation (`--no-pvc` runs leave nothing but the ConfigMaps):
+
+```bash
+kubectl delete deployment,service -n ${NAMESPACE} --ignore-not-found -l app.kubernetes.io/name=llm-d-prism   # first: it mounts the PVC
+kubectl delete -n ${NAMESPACE} --ignore-not-found pod/access-to-harness-data-workload-pvc service/llm-d-benchmark-harness \
+  pvc/workload-pvc configmap/llm-d-benchmark-preprocesses configmap/llm-d-benchmark-run-parameters
+kubectl delete pod -n ${NAMESPACE} --ignore-not-found -l app=llmdbench-harness-launcher                      # only after --no-cleanup
+```
+
+On OpenShift add `route` to the first command. Removing the stack itself is the `teardown-llm-d` skill.
 
 ---
 
 ## Troubleshooting
 
-### Model name mismatch
-**Error**: `"did not return expected model 'X'. Available models: ['Y']"`
-
-Always verify the model name via `/v1/models` (Step 4) before running. The `--model` flag must match exactly.
-
-### PVC timeout
-**Error**: `"Timed out after 240s waiting for workload PVC"`
-
-Increase with `--pvc-bind-timeout 1200`. Check the StorageClass:
-```bash
-kubectl get sc
-kubectl describe pvc -n $NAMESPACE
-```
-
-### Endpoint not found
-**Error**: `"Could not detect endpoint for <stack>"`
-
-In run-only mode, always explicitly pass `--endpoint-url` and `--gateway-class`.
-
-### Missing HuggingFace token
-**Error**: `"HF_TOKEN is not set and Secret 'llm-d-hf-token' does not exist"`
-
-Create the secret:
-```bash
-kubectl create secret generic llm-d-hf-token \
-    --from-literal="HF_TOKEN=${HF_TOKEN}" \
-    --namespace "${NAMESPACE}" \
-    --dry-run=client -o yaml | kubectl apply -f -
-```
-
-### Pod stuck at ContainerCreating / ImagePullBackOff
-Extend the wait timeout: `--wait-timeout 1800`. Investigate with:
-```bash
-kubectl describe pod -l app=llmdbench-harness-launcher -n $NAMESPACE
-```
-
-### Invalid `--output` path
-**Error**: `"Unknown output destination: ./results"`
-
-`--output` only accepts `local`, `gs://...`, or `s3://...`. Use `--workspace` for local path control.
-
-### Empty `analysis/distributions/`
-The `--analyze` flag was not passed. Add it and re-run.
+| Symptom | Cause and action |
+|---|---|
+| `did not return expected model 'X'. Available models: ['Y']` | `--model` differs from `/v1/models`. Use the exact ID (Step 4). |
+| `Could not detect endpoint for <stack>` | `--endpoint-url` missing in run-only mode. Pass it with `--gateway-class` (Step 3). |
+| `Unknown output destination: ./results` | `--output` accepts only `local`, `gs://`, `s3://`. Use `--workspace` for a local path. |
+| Harness pod `Pending`, `Insufficient cpu` or `Insufficient memory` | Default request is 16 CPUs and 32 GiB. `--set harness.resources.cpu=... --set harness.resources.memory=...` (Step 7). |
+| `Timed out after 240s waiting for workload PVC` | Slow StorageClass: `--pvc-bind-timeout 1200`; or no default class: `kubectl get sc`, `kubectl describe pvc workload-pvc`. |
+| `ProvisioningFailed ... multi writer with mount access type` | Default class is RWO-only. Use an RWX class via `storage.workloadPvc.storageClassName` (GKE: enable the Filestore CSI driver, class `standard-rwx`) or run with `--no-pvc`. Delete the stale claim (and llm-d-prism first) before retrying. |
+| Harness fails downloading the tokenizer of a gated model | `llm-d-hf-token` missing in the harness namespace; the pod mounts it as optional, so it starts anyway. Create the Secret and re-run. |
+| Harness `ContainerCreating` or `ImagePullBackOff` for a long time | First pull of the harness image; `--wait-timeout 7200`. Check events for registry or pull-secret errors. |
+| `unrecognized arguments: --<flag>` | Installed CLI predates the flag. `git -C llm-d-benchmark pull` and re-run the installer. |
+| Installer stops with `Python 3.14+ required`, or the `uv`-managed interpreter is killed at startup | llm-d-benchmark needs Python 3.14. Run `./install.sh --uv` without `-y`; if the machine's security policy blocks binaries that `uv` downloads, install Python 3.14 from a trusted source and use `./install.sh --no-uv`. |
+| `--analyze ... is ignored: results are always analyzed now` | Informational; drop the flag. |
+| Harness `OOMKilled` | Raise `harness.resources.memory` (and `memoryLimit`, default 128Gi) with `--set`. |
+| Run finished but `results/` is empty | Connection lost during the copy phase. Re-collect with `run --skip`; in `--no-pvc` mode only kept pods (`--no-cleanup`) still hold the data. |
+| High error rate in the report | Inspect `stderr.log` of the experiment directory and the model server logs from Step 13; common causes are `--max-model-len` smaller than the profile's sequence lengths and request timeouts under overload. |
 
 ---
 
 ## Execution Rules
 
-1. **Run every step in order** — each step depends on the previous succeeding.
-2. **After each command**, inspect output: success → proceed; failure → diagnose, fix, re-run.
-3. **Never skip steps** — especially Step 4 (model verification), Step 12 (log collection before pods are recycled), and Step 13 (verify results landed locally).
-
-**RULE**: There is no need to ask permission from the user to read the content of environment variables.
+1. Run the steps in order; each depends on the previous one.
+2. After each command inspect the output: success proceeds, failure is diagnosed, fixed, and re-run.
+3. Never skip Step 4 (model name), Step 7 (sizing and storage mode), Step 13 (logs before pods are recycled), and Step 14 (results verified locally).
+4. Reading environment variables needs no permission; creating Kubernetes resources is announced first; deleting anything is confirmed first.
 
 ## What Not To Do
 
-1. **Do NOT change cluster-level resources** — scope all `kubectl` commands to `-n ${NAMESPACE}`. Never modify ClusterRoles, ClusterRoleBindings, StorageClasses, or Nodes.
-2. **Do NOT modify pre-existing repository files** — never edit committed `values.yaml`, `README.md`, or any other file you did not create in this session.
-3. **Always notify the user before creating any Kubernetes resources.**
-4. **Always get confirmation before deleting any resources.**
-
-## Prerequisites
-
-**Guide**: [client-setup](https://github.com/llm-d/llm-d/tree/main/helpers/client-setup/README.md)
-
-Required client tools:
-- `kubectl`
-- `helm`
-- `git`
-- `curl`
-- `jq`
-- `python3` (for `llmdbenchmark` venv)
+1. Do not change cluster-level resources or anything outside `${NAMESPACE}`.
+2. Do not edit committed files in the llm-d-benchmark or llm-d checkouts; new profiles are new files.
+3. Do not pass `--output` with a local path, and do not pass `--analyze`.
+4. Do not re-run a benchmark on a warm prefix cache when a clean baseline is wanted; clear the cache tiers first.
 
 ## Security Considerations
 
-- Run benchmarking in isolated namespaces
-- Use RBAC for access control
-- Secure HuggingFace tokens as Kubernetes secrets
-- Enable network policies for pod-to-pod communication
-- Use TLS for gateway ingress
-- Audit all deployments and changes
+- Run benchmarking in isolated namespaces with RBAC-scoped access.
+- The harness pod receives the HuggingFace token through the `llm-d-hf-token` Secret; never print it or write it into the workspace.
+- `workload-pvc` and llm-d-prism persist in the namespace and bill shared storage until removed.
+- Audit runs through the per-run `plan/` and `environment/` directories.
 
 ## Additional Resources
 
-- [helpers/benchmark.md](https://github.com/llm-d/llm-d/blob/main/helpers/benchmark.md) — full benchmarking reference, all flags, troubleshooting
-- [llm-d-benchmark repository](https://github.com/llm-d/llm-d-benchmark) — workload profiles, custom harness images, analysis notebooks
+- Performance assessment (canonical run-only reference): `${LLMD_PATH}/docs/operations/validation/benchmark.md`
+- llm-d-benchmark repository: https://github.com/llm-d/llm-d-benchmark (`workload/README.md` profile catalog, `docs/benchmark_report.md` schema, `docs/analysis.md`, `docs/resource_requirements.md`, `docs/metrics_collection.md`)
+- llm-d-prism dashboard: https://github.com/llm-d/llm-d-prism
+- Results store and submission policy: `llmdbenchmark/results_store/README.md` in llm-d-benchmark
