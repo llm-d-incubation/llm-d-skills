@@ -1,428 +1,295 @@
 ---
 name: deploy-llm-d
-description: Configure and deploy an llm-d stack on an existing Kubernetes and OpenShift cluster using Well-Lit Path guides. Use this skill when users want to deploy, verify, or customize llm-d.
+description: Configure and deploy an llm-d stack on an existing Kubernetes or OpenShift cluster by driving the machine-readable guide.yaml of a Well-Lit Path guide (llm-d v1.0 and later). Use this skill when users want to deploy, verify, or customize llm-d from a guide they have already chosen.
 ---
 
 # Deploy llm-d Stack
-## 📋 Command Execution Notice
 
-**Before executing any command, I will:**
-1. **Explain what the command does** - A clear description of the command's purpose and expected outcome
-2. **Show the actual command** - The exact command that will be executed
-3. **Explain why it's needed** - How this command fits into the overall deployment workflow
+## Command Execution Notice
 
-This ensures you understand each step before it happens and can verify the actions align with your intentions.
+Before executing any command, the agent will:
 
+1. Explain what the command does and the expected outcome.
+2. Show the exact command that will be executed.
+3. Explain why the command is needed at this point of the workflow.
 
-> ## 🔔 ALWAYS NOTIFY THE USER BEFORE CREATING ANYTHING
->
-> **RULE**: Before creating ANY resource — including namespaces, PVCs, files, Helm releases, HTTPRoutes, or any Kubernetes object — you MUST first tell the user what you are about to create and why.
- Critical rules to follow when deploying and managing llm-d:
+## Rules
 
-1. **Do NOT change cluster-level definitions** 
-All changes must be made exclusively inside the designated project namespace. Never modify cluster-wide resources (e.g., ClusterRoles, ClusterRoleBindings, StorageClasses, Nodes, or any resource outside the target namespace). Scope every `kubectl apply`, `helm install`, and `helmfile apply` command to the target namespace using `-n ${NAMESPACE}`.
-
-2. **Do NOT modify any existing code you did not create** 
- Only create new files and modify them as needed. Never edit pre-existing files in the repository (e.g., existing `values.yaml`, `helmfile.yaml`, `httproute.yaml`, `README.md`, or any other committed file). If customization is required, create a new file (e.g., `values-custom.yaml`, `httproute-custom.yaml`) and reference it instead.
+1. **Notify the user before creating anything.** Before creating any resource (namespace, Secret, PVC, Helm release, Gateway, HTTPRoute, file, or any other Kubernetes object), state what will be created and why.
+2. **Do not change cluster-level definitions.** All changes are made inside the target namespace. Never modify ClusterRoles, ClusterRoleBindings, StorageClasses, Nodes, or any resource outside the target namespace. Scope every `kubectl apply`, `helm install`, and `kubectl delete` command with `-n ${NAMESPACE}`.
+   The only exception is a guide's own cluster-scoped prerequisite step (`prerequisites.gaie`, `prerequisites.crds`, `prerequisites.lws`, `prerequisites.keda`, `prerequisites.kueue`, `prerequisites.compute_domain`). These install CRDs or controllers that the guide cannot run without. Check whether they are already present (Step 3). If they are missing, show the exact upstream command, state that it is cluster-scoped, and run it only after the user explicitly confirms. Otherwise hand the command to the cluster administrator and stop.
+3. **Do not modify any existing code you did not create.** Never edit files committed in the llm-d checkout (`guide.yaml`, `README.md`, values files, kustomize overlays). Customizations live in new files under `deployments/` (Step 4.4).
+4. **Do not send inference requests without approval.** Readiness checks use Kubernetes state only. Requests populate the KV cache and change benchmark baselines; the connectivity test is opt-in (Step 5).
 
 ## Overview
 
-llm-d provides Well-Lit Path deployment guides in the `guides/` directory of `${LLMD_PATH}`. The guide index at `${LLMD_PATH}/guides/README.md` is the main reference for available deployment paths and supporting guides.
+Since llm-d v1.0 every foundation and model guide under `${LLMD_PATH}/guides/` is a pair of files:
 
-**To discover available Well-Lit Paths**, the agent will:
-1. Read `${LLMD_PATH}/guides/README.md`
-2. Extract the currently listed guides and descriptions
-3. Read the selected guide's README for guide-specific requirements
-4. Present the available guides to the user with their descriptions
+- `guide.yaml`: the machine-readable source of truth. It declares `env.static` variables (`NAMESPACE`, `ACCELERATOR_TYPE`, `MODEL_SERVER`, `INFRA_PROVIDER`, `MODEL`, ...), a `support` matrix, and step lists under `prerequisites`, `deploy`, `verify`, optionally `benchmark`, and `cleanup`. Steps carry `when:` filters (selected by variable values) and `skip_in:` tags.
+- `README.md`: human-readable prose whose bash blocks are rendered from `guide.yaml`.
+
+`${LLMD_PATH}/scripts/guide.py emit <guide-dir> env <section...> --var NAME=VALUE` assembles an executable bash script from selected sections, resolving `when:` filters against the variables. This skill drives deployments through `emit`, so the commands executed are exactly the guide's commands for the chosen variables.
+
+Deployment shape common to the guides:
+
+| Element | Value |
+|---|---|
+| Shared variables | `source ${REPO_ROOT}/guides/env.sh` (chart URLs, `ROUTER_CHART_VERSION`, `GAIE_URL`, `LWS_VERSION`) |
+| Router install | `helm install ${GUIDE_NAME} ${ROUTER_STANDALONE_CHART}` or `${ROUTER_GATEWAY_CHART}` with `recipes/router/base.values.yaml` plus the guide's values file |
+| Helm release name | `${GUIDE_NAME}` (one release per guide per namespace) |
+| Model servers | `kubectl apply -k guides/<guide>/modelserver/<ACCELERATOR_TYPE>/<MODEL_SERVER>/<INFRA_PROVIDER>/` |
+| Modes | `standalone` (default; EPP pod with an Envoy sidecar, service `${GUIDE_NAME}-epp` on port 80) or `gateway` (Kubernetes Gateway named `llm-d-inference-gateway` plus an HTTPRoute) |
+| Workload kinds | `Deployment` for aggregated serving; `DisaggregatedSet` (LeaderWorkerSet controller, API group `disaggregatedset.x-k8s.io`) for prefill/decode and wide expert parallelism on NVIDIA GPU |
+| Pod labels | `llm-d.ai/guide=<guide>`, `llm-d.ai/role=prefill|decode`, `llm-d.ai/engine-type`, `llm-d.ai/model` |
+| Containers | `modelserver` (engine), `routing-proxy` (sidecar on decode pods) |
+
+Guides that have no `guide.yaml` (README-only operations guides such as `rollouts`, `multi-model-routing`, `batch-serving`) are followed manually from their README under the same rules.
 
 ## When to Use This Skill
 
 Activate this skill when users need to:
-- Deploy LLM inference on Kubernetes or OpenShift
-- Set up production-ready model serving infrastructure
-- Choose between different deployment strategies
-- Configure hardware-specific deployments (NVIDIA, AMD, Intel, TPU, CPU)
-- Modify existing deployments (change models, adjust features, update configurations)
+
+- Deploy LLM inference on Kubernetes or OpenShift from a named llm-d guide
+- Choose between deployment strategies (aggregated, prefill/decode, wide-EP, tiered prefix cache, ...)
+- Deploy on a specific accelerator and model server (NVIDIA, AMD, Intel XPU, Google TPU, CPU, and the community accelerators listed in the guide's support matrix; vLLM, SGLang, TensorRT-LLM, Atom)
+- Modify an existing deployment (change model, replicas, engine flags, router values)
+
+Do not use it to decide which configuration fits a workload; that is `llm-d-autoconfig`. Do not use it for benchmarking (`run-llm-d-benchmark`) or removal (`teardown-llm-d`).
 
 ## Prerequisites
 
-Each Well-Lit Path guide contains its own prerequisites section. Common prerequisites include:
+Client side:
 
-1. **LLMD_PATH environment variable** - Point to the local llm-d repository clone
-2. **Client Tools** - `kubectl` or `oc`, `helm`, `kustomize`, `git`
-3. **HuggingFace Token** - Secret `llm-d-hf-token` with key `HF_TOKEN` in target namespace when the selected model requires it
-4. **Gateway Provider** - only when the user selects Gateway API proxy mode; see `${LLMD_PATH}/guides/prereq/gateway-provider/README.md`
-5. **Infrastructure** - sufficient cluster resources for the selected guide
-6. **Benchmark tooling** (optional) - use the local `llm-d-benchmark` repository README and CLI docs for benchmarking workflows
+- `LLMD_PATH` pointing to a local llm-d checkout (Step 0)
+- `kubectl` (or `oc`), `helm` 3.x, `git`, `jq`
+- `python3` with PyYAML, or `uv` (both run `scripts/guide.py`)
+- `HF_TOKEN` exported in the shell when the guide creates the `llm-d-hf-token` Secret
 
-**Refer to the specific guide's README for detailed prerequisites.**
+Cluster side (checked in Step 3):
 
-## Deployment Workflow
+- Kubernetes 1.29 or newer; 1.34 or newer for DRA-based overlays (`resource.k8s.io/v1`)
+- Gateway API Inference Extension CRDs (`inferencepools.inference.networking.k8s.io`)
+- LeaderWorkerSet controller with `enableDisaggregatedSet=true` for guides whose overlays render a `DisaggregatedSet`
+- A Gateway provider (Istio, GKE Gateway, Agentgateway, Envoy AI Gateway, NGINX Gateway Fabric) only in `gateway` mode; see `${LLMD_PATH}/docs/infrastructure/gateway/README.md`
+- Sufficient accelerators for the selected overlay (see the guide's support table)
 
-When a user requests llm-d deployment, follow this workflow:
+## Workflow
 
-### Step 0: Verify LLMD_PATH or Get Repository Location
+### Step 0: Locate the llm-d Checkout
 
-**Check for llm-d repository:**
-- Use `LLMD_PATH` if set
-- If not set, detect a nearby local clone; once a valid path is known, set/export `LLMD_PATH` before continuing
-- If not found, offer options:
-  - user provides path to an existing clone, then set/export `LLMD_PATH`
-  - clone from GitHub from https://github.com/llm-d/llm-d on `main` or a specific branch, then set/export `LLMD_PATH`
-  - use a release tag if requested, then set/export `LLMD_PATH`
-  
-### Step 1: Discover and Select Well-lit Path Guide
-
-1. Automatically discover available Well-lit Path guides:
-
-2. Extract guide information:
-   - guide name from `${LLMD_PATH}/guides/README.md`
-   - guide directory name
-   - brief description from the guide index and selected guide README
-
-3. Present discovered guides to user:
-
-**Default suggestion**: If the user has no strong preference, suggest `optimized-baseline` as the default starting point.
-
-**For deployment modifications** (changing model, features, or configuration):
-- Select the Well-lit Path guide closest to the user's requirements
-- Copy the guide directory to `deployments/` with naming convention: `{model-short-name}-{namespace}-{DDMMYYYY}` (e.g., `qwen25-llmd-25032026`)
-- Modify the copied configuration files as needed
-- Use the modified copy for deployment
-
-### Step 2: Auto-Detect Current Project/Namespace
-
-1. check if a NAMESPACE environment variable is specified. 
-2. check if an oc project exists.
-3. If none of the above holds, ask the user for the NAMESPACE where it is deployed.
-4. Make sure the NAMESPACE environment variable is set.
-
-**Auto-detect release name postfix:**
-- Check for existing releases in the namespace to detect if postfix is needed
-- Only ask if concurrent installations are detected or if detection fails
-
-### Step 3: Auto-Detect Configuration and Resources
-
-**Extract requirements from the guide:**
-- Parse the guide's README.md to identify required components e.g., Gateway API, Kueue, monitoring tools
-- Identify hardware requirements (GPU types, memory, storage)
-- Note any prerequisite configurations or dependencies
-- Extract recommended values and configuration parameters
-
-**Automatically detect existing resources and configuration:**
-
-1. Detect Hardware/Accelerators
-
-2. Detect Gateway Provider
-   
-3. Detect Storage Class
-   
-4. Check existing resources in namespace:
-   
-**Present detected configuration:**
-
-"Detected configuration:
-- Namespace: `{detected-namespace}`
-- Hardware: `{detected-hardware}` ({count} nodes with {accelerator-type})
-- Gateway Provider: `{detected-gateway}`
-- Storage Class: `{detected-storage-class}`
-- Existing resources: {list if any found}"
-
-**Only ask user for input if:**
-1. Auto-detection failed for any component
-2. Detected resource doesn't exist or is invalid
-3. User wants to override detected values
-
-If user wants changes, ask specifically for the values they want to override. Otherwise, proceed with detected configuration.
-
-### Step 4: Execute Deployment Plan
-
-**Navigate to the guide directory:**
-
-**Key principle**: Only provide input when changing defaults. Use auto-detected values unless user explicitly overrides.
-
-#### Deployment Actions
-
-Execute these actions in sequence, adapting based on the specific guide's requirements:
-
-1. Verify namespace exists:
-
-2. Check for existing PVC:
-
-**If PVC is required by the guide:**
-- **PVC exists and is Bound**: Use existing PVC. Inform user: "Found existing PVC `{pvc-name}` in namespace `{namespace}`. Using it for deployment."
-- **No PVC exists**:
-  - Read PVC configuration from guide (typically in `manifests/pvc.yaml`)
-  - Use auto-detected storage class from Step 3
-  - Inform user: "Creating PVC `{pvc-name}` with storage class `{storage-class}` and size `{size}`."
-  - Apply PVC manifest
-  - Wait for PVC to be Bound
-
-
-#### 4.3 Prerequisites Verification
-
-**Verify all prerequisites are met:**
-- Client tools installed (`kubectl` or `oc`, `helm`, `kustomize`)
-- HuggingFace token secret created if required by the selected model
-- Gateway provider deployed if the user selected Gateway API proxy mode
-- Infrastructure requirements met (nodes, accelerators)
-- PVC is Bound if required by the guide
-
-**Check each prerequisite programmatically where possible:**
-```bash
-# Example: Check for HuggingFace secret
-kubectl get secret llm-d-hf-token -n ${NAMESPACE} 2>/dev/null || echo "Warning: HuggingFace token secret not found"
-
-# Example: Check for Gateway API CRDs when gateway mode is selected
-kubectl get crd gateways.gateway.networking.k8s.io 2>/dev/null || echo "Warning: Gateway API CRDs not installed"
-```
-
-#### 4.4 Install the Scheduler
-
-Follow the current install flow in `${LLMD_PATH}/guides/01_installing_a_guide.md`:
-
-- **Standalone mode** is the default and simplest path
-- **Gateway API proxy mode** is used when the user needs a full gateway provider
-
-Install the scheduler using the guide's layered Helm values and the appropriate chart for the chosen mode.
-
-#### 4.5 Deploy the Model Server
-
-Deploy the model server using the guide's `kustomize` overlay:
-
-```bash
-kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl apply -n ${NAMESPACE} -f -
-```
-
-#### 4.6 Deployment Validation
-
-**Execute validation checks to confirm successful deployment:**
-
-1. **Pod health:**
-   - All pods should reach Running state
-   - Check pod logs for errors
-   - Check for CrashLoopBackOff or ImagePullBackOff
-   - Review logs if issues: `kubectl logs {pod} -n {namespace}`
-
-2. **Resource status:**
-   - InferencePool shows Ready
-   - Gateway shows Programmed
-   - HTTPRoute shows Accepted
-   - Check PVCs (if applicable)
-
-3. **Deployment readiness test (non-intrusive):**
-   - **Purpose:** Verify the llm-d stack is operational without sending inference requests
-   - **This test does NOT populate the KV cache**
-   - Check deployment readiness:
-     ```bash
-     kubectl get deployment -n ${NAMESPACE}
-     kubectl get inferencepool -n ${NAMESPACE}
-     kubectl get gateway -n ${NAMESPACE}
-     kubectl get httproute -n ${NAMESPACE}
-     ```
-   - Verify all resources show healthy status:
-     - Deployments: READY column shows desired/current match (e.g., 1/1)
-     - InferencePool: STATUS shows "Ready"
-     - Gateway: PROGRAMMED shows "True"
-     - HTTPRoute: ACCEPTED shows "True"
-   - Check service endpoints are configured:
-     ```bash
-     kubectl get svc -n ${NAMESPACE}
-     kubectl get endpoints -n ${NAMESPACE}
-     ```
-   - Verify pods are ready and not restarting:
-     ```bash
-     kubectl get pods -n ${NAMESPACE} -o wide
-     ```
-   - **Success criteria:** All resources show healthy status, pods are Running with READY 1/1, no restarts
-
-4. **Connectivity test:**
-   - **MANDATORY WORKFLOW - You MUST follow this step:**
-   
-   **Step 1: MANDATORY - Ask user if they want to generate verification script**
-   - **You MUST use `ask_followup_question` tool - this is NON-NEGOTIABLE**
-   - Explain what the verification script will do in a few words
-   - Example:
-     ```
-     <ask_followup_question>
-     <question>I can generate a verification script that will:
-     - Expose the llm-d endpoint (via port-forward)
-     - Test the /v1/models endpoint
-     - Send a test completion request
-     
-     Would you like me to generate this verification script?</question>
-     <follow_up>
-      <suggest>No</suggest>
-      <suggest>Yes, generate the verification script</suggest>
-     </follow_up>
-     </ask_followup_question>
-     ```
-   
-   **If user agrees to generate the script:**
-   - Read and follow the detailed instructions in [`references/connectivity-verification.md`](references/connectivity-verification.md)
-   - The reference file contains Steps 2-4 for generating, showing, and executing the verification script
-   
-   **CRITICAL: You cannot skip Step 1. Always ask the user first before reading the connectivity verification instructions.**
-
-**Success Criteria:**
-- All required pods are Running state with N/N ready
-- Scheduler resources are ready
-- Gateway resources are healthy when gateway mode is used
-- `/v1/models` responds successfully
-- `/v1/completions` responds successfully
-### 4.7 Generate Deployment Script
-
-**CRITICAL: You MUST ALWAYS generate a deployment script after successful validation.**
-
-After successful validation, **you MUST generate a reusable deployment script** with a date-stamped filename.
-
-**Script Naming Convention:**
-- **REQUIRED FORMAT**: `deploy-YYYYMMDD.sh` (e.g., `deploy-20260315.sh`)
-- Use the current date in the format: YYYYMMDD
-- Example: For March 15, 2026, the script should be named `deploy-20260315.sh`
-
-**Script Location:**
-- Save the script in the `deployments/` directory
-- Full path example: `deployments/deploy-20260315.sh`
-
-**Script Content Requirements:**
-The deployment script MUST contain ALL commands that were actually executed during deployment:
-- Include exact commands used (with actual values, not placeholders)
-- Add prerequisite checks at the beginning
-- Include all deployment steps in order
-- Include validation steps at the end
-- Add error handling and exit on failures
-- Add comments explaining each major step
-- Set executable permissions: `chmod +x deployments/deploy-YYYYMMDD.sh`
-
-**Example Script Structure:**
-```bash
-#!/bin/bash
-# Deployment script generated on YYYY-MM-DD
-# Guide: [guide-name]
-# Namespace: [namespace]
-
-set -e  # Exit on error
-
-# Prerequisites check
-echo "Checking prerequisites..."
-[prerequisite commands]
-
-# Deployment
-echo "Starting deployment..."
-[actual deployment commands]
-
-# Validation
-echo "Validating deployment..."
-[validation commands]
-
-echo "Deployment complete!"
-```
-
-**REMINDER: Generating this script is NOT optional - it MUST be created every time a deployment is completed.**
-#### Common Issues and Solutions
-
-##### Long Namespace Names
-
-**Issue**: Generated pod hostnames become too long (>64 characters)
-
-**Solution**: Use shorter namespace names (e.g., `llm-d`) and set `RELEASE_NAME_POSTFIX` environment variable if needed
-
-##### RDMA Connectivity Failures (Wide-EP)
-
-**Issue**: All-to-All RDMA connectivity not working
-
-**Solution**: Ensure every NIC can communicate with every NIC on all hosts (not just rail-only connectivity). Verify RDMA device plugin is running.
-
-##### Pod Scheduling Failures
-
-**Issue**: Pods not scheduling despite available resources
-
-**Solution**: 
-- Check node selectors: `$CLI_CMD get pod <pod> -n ${NAMESPACE} -o yaml | grep -A 5 nodeSelector`
-- Check taints and tolerations: `$CLI_CMD describe nodes | grep -A 5 Taints`
-- Verify hardware requirements match available nodes
-
-##### Excessive Pod Creation / GPU Hardware Failures
-
-**Issue**: Deployment creates hundreds of pods, all failing with GPU errors like "GPU is lost" or NVLink failures
-
-**Solution**:
-1. **Stop the pod creation loop immediately:**
+1. Use `LLMD_PATH` if set. Otherwise look for a nearby clone (`./llm-d`, `../llm-d`). If none exists, offer to clone:
    ```bash
-   kubectl delete deployment <deployment-name> -n ${NAMESPACE}
-   kubectl delete pods -n ${NAMESPACE} -l llm-d.ai/model=<model-name> --grace-period=0 --force
+   # release-1.0 is the branch the v1.0.0 guides are published from; main tracks development
+   git clone --branch release-1.0 https://github.com/llm-d/llm-d.git && export LLMD_PATH="$(pwd)/llm-d"
    ```
-
-2. **Identify problematic nodes:**
+   Use `main` or another branch or tag only when the user asks for it.
+2. Record the checkout identity for the deployment script: `git -C ${LLMD_PATH} describe --tags --always` and `git -C ${LLMD_PATH} branch --show-current`.
+3. Confirm the machine-readable tooling exists and runs:
    ```bash
-   kubectl describe pod <failing-pod> -n ${NAMESPACE} | grep -A 10 "Events:"
+   test -f ${LLMD_PATH}/scripts/guide.py && test -f ${LLMD_PATH}/docs/well-lit-paths/guides.yaml
+   python3 -c 'import yaml' 2>/dev/null && GUIDE_PY="python3 ${LLMD_PATH}/scripts/guide.py" || GUIDE_PY="uv run ${LLMD_PATH}/scripts/guide.py"
+   ${GUIDE_PY} --help >/dev/null
    ```
-   Look for node names in "Successfully assigned" messages and GPU errors
+   If `scripts/guide.py` is absent, the checkout predates llm-d v1.0 (before 2026-08). Ask the user to update it; do not improvise commands from an old README.
 
-3. **Add node anti-affinity to avoid bad nodes:**
-   Add this to your deployment patch YAML:
-   ```yaml
-   spec:
-     template:
-       spec:
-         affinity:
-           nodeAffinity:
-             requiredDuringSchedulingIgnoredDuringExecution:
-               nodeSelectorTerms:
-               - matchExpressions:
-                 - key: kubernetes.io/hostname
-                   operator: NotIn
-                   values:
-                   - <problematic-node-name>
+### Step 1: Discover and Select a Guide
+
+1. Read `${LLMD_PATH}/docs/well-lit-paths/guides.yaml`. Its `sections` (`foundations`, `models`, `operations`, `operations-startup`, `operations-traffic`) list every published guide with `dir`, `slug`, and `title`. Read `${LLMD_PATH}/guides/README.md` for the one-line descriptions.
+2. For each candidate, note whether `<dir>/guide.yaml` exists. Only those are driven by `emit`.
+3. Present the guides grouped by section with their descriptions. If the user has no preference, suggest `optimized-baseline`.
+4. Set `GUIDE_DIR=${LLMD_PATH}/<dir>` (for example `${LLMD_PATH}/guides/optimized-baseline` or `${LLMD_PATH}/guides/models/glm-5-2`) and read `${GUIDE_DIR}/README.md` for the guide-specific prerequisites and the meaning of its variants.
+
+### Step 2: Resolve the Namespace and Existing Releases
+
+1. Use `NAMESPACE` if set; otherwise the current `oc project`; otherwise ask. Export `NAMESPACE`.
+2. Check for an existing deployment of the same guide:
+   ```bash
+   helm list -n ${NAMESPACE}
+   kubectl get pods -n ${NAMESPACE} -l llm-d.ai/guide -L llm-d.ai/guide,llm-d.ai/role
+   ```
+   The router release is named after the guide, so a release called `<guide>` already present means the guide is deployed in this namespace. Ask whether to modify it (Step 4.4), use another namespace, or stop. Do not install a second copy under the same name.
+
+### Step 3: Summarize the Guide and Detect the Target
+
+1. Summarize the guide's variables, support matrix, modes, and step paths:
+   ```bash
+   python3 skills/deploy-llm-d/scripts/list-guide-steps.py ${GUIDE_DIR}
+   ```
+   The output classifies every step path as `stage` (run in order), `mode=<name>` (run exactly one mode), `option(by-variables)` (selected by `when:` filters), `option(manual)` (alternatives that need a choice; the README explains them), or `test` (sends traffic; Step 5 only). Add `--json` for structured output.
+2. Detect the accelerator and map it to the guide's `ACCELERATOR_TYPE` values:
+   ```bash
+   kubectl get nodes -o json | jq -r '.items[].status.allocatable | keys[]' \
+     | grep -E '^(nvidia\.com/gpu|amd\.com/gpu|google\.com/tpu|iluvatar\.com/gpu|metax-tech\.com/gpu|birentech\.com/gpu|mthreads\.com/gpu)$' | sort | uniq -c
+   kubectl get deviceclasses.resource.k8s.io -o name 2>/dev/null   # DRA: gpu.nvidia.com, gpu.intel.com, npu.rebellions.ai, mrdma.google.com
+   kubectl get nodes -L cloud.google.com/gke-accelerator,cloud.google.com/gke-tpu-accelerator,cloud.google.com/gke-nodepool --no-headers 2>/dev/null | head
    ```
 
-4. **Redeploy with the updated configuration**
+   | Signal | `ACCELERATOR_TYPE` |
+   |---|---|
+   | `nvidia.com/gpu` allocatable, or DeviceClass `gpu.nvidia.com` | `gpu` |
+   | `amd.com/gpu` | `amd` |
+   | DeviceClass `gpu.intel.com` | `xpu` |
+   | `google.com/tpu` with node label `gke-tpu-accelerator=tpu-v6e-slice` / `tpu7x` | `tpu/v6` / `tpu/v7` (confirm against the support table) |
+   | DeviceClass `npu.rebellions.ai` | `npu` |
+   | `iluvatar.com/gpu`, `metax-tech.com/gpu`, `birentech.com/gpu`, `mthreads.com/gpu` | `iluvatar`, `metax`, `biren`, `mthreads` |
+   | none of the above | `cpu`, only if the guide offers it; confirm with the user |
 
-See [troubleshooting.md](./references/troubleshooting.md) for detailed steps and additional solutions.
+3. Set the remaining variables from the summary:
+   - `MODEL_SERVER`: the guide default (`vllm`) unless the user asks for another engine the support matrix marks as `validated` or `community` for that accelerator.
+   - `INFRA_PROVIDER`: `gke` when nodes carry `cloud.google.com/gke-nodepool` and the support matrix lists `gke` for the accelerator; otherwise `base`. Other values (`coreweave`, `aws`, `cks-mooncake`, `nixl/*`, `moriio/*`, `rdma`, `gke/a4x`) only on request.
+   - `MODEL`: the served model the support matrix lists for the accelerator. Changing it is a customization (Step 4.4).
+   - `MODE`: `standalone` unless the user asks for Gateway mode or a Gateway named `llm-d-inference-gateway` already exists in the namespace. In gateway mode map the GatewayClass to the chart's `provider.name`: `gke-l7-*` to `gke`, `istio` to `istio`, `agentgateway` to `agentgateway`, anything else to `none`.
+   - `MONITORING`: `false` unless the user wants Prometheus monitoring and the stack exists.
+4. Check prerequisites programmatically:
+   ```bash
+   kubectl get secret llm-d-hf-token -n ${NAMESPACE} >/dev/null 2>&1 && echo "HF secret: present" || echo "HF secret: missing (prerequisites.secrets will create it; HF_TOKEN must be exported)"
+   kubectl get crd inferencepools.inference.networking.k8s.io >/dev/null 2>&1 && echo "GAIE CRDs: present" || echo "GAIE CRDs: missing (cluster-scoped; prerequisites.gaie)"
+   kubectl get crd disaggregatedsets.disaggregatedset.x-k8s.io >/dev/null 2>&1 && echo "DisaggregatedSet CRD: present" || echo "DisaggregatedSet CRD: missing (needed only if the overlay renders a DisaggregatedSet)"
+   kubectl kustomize ${GUIDE_DIR}/modelserver/${ACCELERATOR_TYPE}/${MODEL_SERVER}/${INFRA_PROVIDER} 2>/dev/null | grep -E '^kind: (Deployment|DisaggregatedSet|LeaderWorkerSet|PersistentVolumeClaim|ResourceClaimTemplate)$' | sort | uniq -c
+   kubectl get gatewayclass 2>/dev/null                      # gateway mode only
+   kubectl get gateway llm-d-inference-gateway -n ${NAMESPACE} 2>/dev/null   # gateway mode only
+   kubectl get storageclass 2>/dev/null                      # only if the overlay renders a PersistentVolumeClaim
+   ```
+   Cluster-scoped prerequisites that are missing fall under Rule 2: show the guide's command (`${GUIDE_PY} emit ${GUIDE_DIR} env prerequisites.gaie` or `prerequisites.lws`), state that it is cluster-scoped, and run it only on explicit confirmation.
+5. Present the detected configuration and ask only for gaps or overrides:
+   ```
+   Detected configuration:
+   - Guide: <guide> (<GUIDE_DIR>), llm-d <describe output>
+   - Namespace: <NAMESPACE>
+   - Accelerator: <ACCELERATOR_TYPE> (<count> nodes, <signal>), model server: <MODEL_SERVER>, provider: <INFRA_PROVIDER>
+   - Model: <MODEL>
+   - Mode: <MODE> (<provider.name> in gateway mode)
+   - Prerequisites: HF secret <state>, GAIE CRDs <state>, DisaggregatedSet CRD <state or n/a>
+   - Existing releases in the namespace: <list or none>
+   ```
 
+### Step 4: Plan and Execute
 
-##### Gateway Routing Not Working
+#### 4.1 Compose the section list
 
-**Issue**: HTTPRoute not routing traffic to services
+From the Step 3 summary, in `guide.yaml` order:
 
-**Solution**:
-- Verify gateway provider is correctly deployed
-- Check HTTPRoute backend references match service names
-- Verify services have endpoints: `$CLI_CMD get endpoints -n ${NAMESPACE}`
-- Check gateway logs for routing errors
+- `prerequisites.*` except `prerequisites.clone` (the checkout exists) and except `prerequisites.secrets` when the Secret already exists. Cluster-scoped prerequisites only per Rule 2.
+- `deploy.*` stages in order, including only the selected mode (`deploy.standalone` or `deploy.gateway`), every `option(by-variables)` member (the filters select the right one), and the chosen member of each `option(manual)` group. Confirm `option(manual)` choices with the user, quoting the README text that explains them.
+- `verify.endpoint.<MODE>` (it only exports `IP`). No `verify.tests.*` yet.
 
-##### HuggingFace Token Issues
+Variables are passed with `--var`; `emit` rejects names not declared in `env.static` and values outside the declared `values:`. Always pass `--var REPO_ROOT=${LLMD_PATH}` so the script does not depend on the working directory.
 
-**Issue**: Models fail to download or authentication errors
+#### 4.2 Render the plan and the deployment script
 
-**Solution**:
-- Verify secret exists: `$CLI_CMD get secret llm-d-hf-token -n ${NAMESPACE}`
-- Check secret has correct key: `$CLI_CMD get secret llm-d-hf-token -n ${NAMESPACE} -o yaml`
-- Verify token is valid: Test token at https://huggingface.co/settings/tokens
-- Ensure pods have access to secret (check volume mounts)
+```bash
+mkdir -p deployments
+DATE=$(date +%Y%m%d)
+EMIT_VARS=(--var REPO_ROOT=${LLMD_PATH} --var NAMESPACE=${NAMESPACE} --var ACCELERATOR_TYPE=${ACCELERATOR_TYPE} --var MODEL_SERVER=${MODEL_SERVER} --var INFRA_PROVIDER=${INFRA_PROVIDER} --var MODEL=${MODEL})
+# add --var MONITORING=true and other guide variables as selected
+{
+  echo '#!/usr/bin/env bash'
+  echo "# Deployment script generated by deploy-llm-d on $(date -u +%Y-%m-%dT%H:%MZ)"
+  echo "# llm-d: $(git -C ${LLMD_PATH} describe --tags --always) ($(git -C ${LLMD_PATH} branch --show-current))  guide: ${GUIDE_DIR#${LLMD_PATH}/}  namespace: ${NAMESPACE}  mode: ${MODE}"
+  echo "# HF_TOKEN must be exported in the shell before running."
+  ${GUIDE_PY} emit ${GUIDE_DIR} env <section...> "${EMIT_VARS[@]}" | sed '1{/^#!/d;}'   # emit's shebang would otherwise land below the header
+} > deployments/deploy-${DATE}.sh
+chmod +x deployments/deploy-${DATE}.sh
+```
 
----
+Show the full script to the user and obtain confirmation before executing anything. The script is the record of what runs; generating it is mandatory, also when the user later declines execution.
 
+#### 4.3 Execute section by section
 
-## Troubleshooting Guidance
+Run each section in its own invocation so a failure is attributed to one section. Every invocation starts with `env`, which also sources `guides/env.sh` and validates the accelerator and engine pairing:
 
-For detailed troubleshooting guidance, see [troubleshooting.md](./references/troubleshooting.md).
+```bash
+${GUIDE_PY} emit ${GUIDE_DIR} env <section> "${EMIT_VARS[@]}" | bash
+```
 
-### Additional Resources
+Order: prerequisites, then router (`deploy.router_values`, `deploy.monitoring_values`, `deploy.accelerator_values`, `deploy.<MODE>`), then model servers (`deploy.modelserver...`), then `deploy.monitoring`. Note that `deploy.router_values` only exports variables, so it must be emitted together with `deploy.<MODE>` in the same invocation. Inspect each output; on failure, consult [troubleshooting.md](references/troubleshooting.md), fix, and re-run the failed section only.
 
-- **Guide Index**: `${LLMD_PATH}/guides/README.md`
-- **Installing a Guide**: `${LLMD_PATH}/guides/01_installing_a_guide.md`
-- **Verifying a Guide**: `${LLMD_PATH}/guides/02_verifying_a_guide.md`
-- **Benchmarking a Guide**: `${LLMD_PATH}/guides/03_benchmarking_a_guide.md`
-- **llm-d-benchmark CLI**: use the local `llm-d-benchmark` repository README when benchmark automation is needed
+After the model server section, wait for readiness without sending requests:
+
+```bash
+kubectl get pods -n ${NAMESPACE} -l llm-d.ai/guide=${GUIDE_NAME} -w
+kubectl wait --for=condition=Ready pod -n ${NAMESPACE} -l llm-d.ai/guide=${GUIDE_NAME} --field-selector=status.phase!=Failed --timeout=1800s
+```
+
+The field selector matters: evicted pods stay behind as `Failed` objects with the same labels and would make the wait time out after the live pods are Ready. Model download and engine startup take 5 to 30 minutes depending on model size and image pull; TPU engines add a compilation phase of a similar length. A `DisaggregatedSet` creates one LeaderWorkerSet per role; watch `kubectl get disaggregatedset,leaderworkerset -n ${NAMESPACE}`.
+
+#### 4.4 Customizations
+
+Never edit the checkout. Two supported customization points:
+
+- **Model servers**: create `deployments/<name>/kustomization.yaml` that uses the upstream overlay as its base and adds patches, then apply it instead of the emitted `deploy.modelserver` step:
+  ```yaml
+  apiVersion: kustomize.config.k8s.io/v1beta1
+  kind: Kustomization
+  resources:
+    - ../../llm-d/guides/<guide>/modelserver/<ACCELERATOR_TYPE>/<MODEL_SERVER>/<INFRA_PROVIDER>   # relative to deployments/<name>/; kustomize rejects absolute paths
+  patches:
+    - path: patch-modelserver.yaml   # for example: replicas, --max-model-len, model name, resources
+  ```
+  ```bash
+  python3 -c 'import os.path, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' \
+    ${LLMD_PATH}/guides/<guide>/modelserver/<ACCELERATOR_TYPE>/<MODEL_SERVER>/<INFRA_PROVIDER> deployments/<name>   # the resources: entry
+  kubectl kustomize deployments/<name> | less   # inspect the render before applying
+  kubectl apply -n ${NAMESPACE} -k deployments/<name>
+  ```
+  Patch rules that matter in practice: a strategic-merge patch replaces `args` wholesale but merges `env`, `volumes`, and `volumeMounts` by name, so remove entries with `- name: <entry>` plus `$patch: delete` and replace a whole list with a leading `- $patch: replace` element. Replacing a volume's source (for example the hostPath HF cache with an ephemeral PVC) takes two patches, one that deletes the entry and one that re-adds it under the same name. Overlays that render a `DisaggregatedSet` need `guides/recipes/modelserver/components/disaggregatedset-schema` under `components:` so those merge keys apply inside the roles.
+  Changing `MODEL` also changes the served model name the router and clients use; keep the `llm-d.ai/*` labels intact so the router's `modelServers.matchLabels` still selects the pods (the `llm-d.ai/model` label may be corrected in both `spec.selector.matchLabels` and the pod template).
+- **Router**: copy the emitted `helm install` command into the deployment script and append `-f deployments/<name>/router.values.yaml` after the guide's values file. Plugin changes belong to `llm-d-autoconfig`; this skill only layers values the user supplies.
+
+Record every customization in the deployment script (replace the emitted command with the one actually run and keep a comment pointing at the custom file).
+
+### Step 5: Validate
+
+1. Kubernetes state (no traffic):
+   ```bash
+   helm status ${GUIDE_NAME} -n ${NAMESPACE}
+   kubectl get pods -n ${NAMESPACE} -o wide -L llm-d.ai/role
+   kubectl get inferencepool -n ${NAMESPACE}
+   kubectl get svc ${GUIDE_NAME}-epp -n ${NAMESPACE}                       # standalone mode
+   kubectl get gateway,httproute -n ${NAMESPACE}                           # gateway mode: PROGRAMMED=True, ACCEPTED=True
+   kubectl get disaggregatedset,leaderworkerset -n ${NAMESPACE} 2>/dev/null
+   kubectl get events -n ${NAMESPACE} --sort-by=.lastTimestamp | tail -20
+   ```
+   Success criteria: every pod `Running` with all containers ready and no restarts, the Helm release `deployed`, an `InferencePool` present, and in gateway mode the Gateway programmed and the HTTPRoute accepted.
+2. Connectivity test (opt-in). Ask the user whether to run the guide's request test; it sends one completion request through the router and therefore populates the KV cache. On agreement follow [connectivity-verification.md](references/connectivity-verification.md), which emits `verify.endpoint.<MODE>` and `verify.tests.request` from the same `guide.yaml`.
+3. Report: pods per role, endpoint (`${GUIDE_NAME}-epp` ClusterIP or the Gateway address), model name, the deployment script path, and any customization files.
+
+### Step 6: Deliverables
+
+- `deployments/deploy-YYYYMMDD.sh` (Step 4.2), updated with any customizations actually applied and with the validation commands of Step 5 appended.
+- Custom overlays or values under `deployments/<name>/`, if any.
+- A short summary of what was deployed and how to remove it: the guide's `cleanup` section (`${GUIDE_PY} emit ${GUIDE_DIR} env cleanup "${EMIT_VARS[@]}"`) or the `teardown-llm-d` skill.
+
+## Common Issues
+
+| Symptom | Cause and action |
+|---|---|
+| `error: <guide> does not support MODEL_SERVER=... on ACCELERATOR_TYPE=...` when sourcing `env.sh` | The pairing has no overlay. Pick a pairing from the support matrix. |
+| `--var X=... not in declared values` from `emit` | Value outside `env.static` vocabulary. Use a listed value. |
+| `no matches for kind "InferencePool"` | GAIE CRDs missing. Cluster-scoped prerequisite (`prerequisites.gaie`), Rule 2. |
+| `no matches for kind "DisaggregatedSet"` | LeaderWorkerSet controller missing or installed without `enableDisaggregatedSet=true`. Cluster-scoped prerequisite (`prerequisites.lws`), Rule 2. |
+| `cannot re-use a name that is still in use` from `helm install` | A release named `${GUIDE_NAME}` exists in the namespace (Step 2). |
+| Requests return 503 in gateway mode on GKE | `provider.name=none` renders no `HealthCheckPolicy`. Re-install with `--set provider.name=gke`. |
+| Pods `Pending` | Accelerator count, node selectors, taints, or quota. See troubleshooting. |
+| Model servers stall at `unauthenticated requests to HF Hub` | `llm-d-hf-token` Secret missing or empty. Create it, then delete the pods. |
+| Hundreds of pods created, GPU errors in events | Faulty node. Remove the workload (`kubectl delete -k <overlay> -n ${NAMESPACE}`), add node anti-affinity through a custom overlay, redeploy. See troubleshooting. |
+
+For detailed guidance see [troubleshooting.md](references/troubleshooting.md).
+
+## Additional Resources
+
+- Guide index: `${LLMD_PATH}/guides/README.md` and `${LLMD_PATH}/docs/well-lit-paths/guides.yaml`
+- Guide authoring reference (schema of `guide.yaml`): `${LLMD_PATH}/guides/templates/README.md`
+- Quickstart: `${LLMD_PATH}/docs/getting-started/quickstart.md`
+- Gateway providers: `${LLMD_PATH}/docs/infrastructure/gateway/README.md`
+- LeaderWorkerSet and DisaggregatedSet: `${LLMD_PATH}/docs/infrastructure/model-server-orchestration.md`, `${LLMD_PATH}/docs/operations/disaggregation/disaggregatedset.md`
+- Smoke test script: `${LLMD_PATH}/docs/operations/validation/smoke-test/healthcheck.sh`
+- Benchmarking: `${LLMD_PATH}/docs/operations/validation/benchmark.md` and the `run-llm-d-benchmark` skill
 
 ## Security Considerations
 
 - Run deployments in isolated namespaces
-- Never modify cluster-wide resources
-- Use RBAC for access control
-- Secure HuggingFace tokens as Kubernetes secrets
-- Enable network policies for pod-to-pod communication
-- Use TLS for gateway ingress
-- Audit all deployments and changes
+- Never modify cluster-wide resources except the guide's own prerequisites, and only with explicit confirmation
+- Keep the HuggingFace token in the `llm-d-hf-token` Secret; never print it or write it into the deployment script
+- Use RBAC for access control, network policies for pod-to-pod traffic, and TLS at the Gateway in gateway mode
+- Audit all deployments and changes through the dated deployment scripts
